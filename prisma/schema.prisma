@@ -90,3 +90,36 @@ model Recipient {
   @@index([batchId])
 }
 
+model PaymentAttempt {
+  id             String        @id @default(cuid())
+  batchId        String
+  batch          Batch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  chunkIndex     Int
+  sequenceNumber String?
+  operationCount Int
+  status         AttemptStatus @default(BUILT)
+  txHash         String?
+  xdrEnvelope    String?       @db.Text
+  resultXdr      String?       @db.Text
+  errorCode      String?
+  submittedAt    DateTime?
+  createdAt      DateTime      @default(now())
+
+  items PaymentAttemptItem[]
+
+  @@index([batchId])
+}
+
+model PaymentAttemptItem {
+  id             String         @id @default(cuid())
+  attemptId      String
+  attempt        PaymentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  recipientId    String
+  recipient      Recipient      @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  operationIndex Int
+  resultCode     String?
+  status         AttemptStatus  @default(BUILT)
+
+  @@index([attemptId])
+  @@index([recipientId])
+}
