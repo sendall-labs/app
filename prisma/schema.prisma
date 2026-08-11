@@ -1,0 +1,92 @@
+// MultiSend data model — classic Stellar bulk payments (no Soroban).
+// See /Users/caner/.claude/plans/instawards-statement-of-work-sow-goofy-hopcroft.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Network {
+  TESTNET
+  PUBLIC
+}
+
+enum BatchStatus {
+  DRAFT
+  VALIDATING
+  VALIDATED
+  CHECKING
+  READY
+  SUBMITTING
+  PARTIAL_FAILURE
+  COMPLETED
+  FAILED
+}
+
+enum LineItemStatus {
+  PENDING
+  VALIDATION_FAILED
+  CHECK_FAILED
+  READY
+  IN_TRANSACTION
+  SUCCESS
+  FAILED
+}
+
+enum AttemptStatus {
+  BUILT
+  SIGNED
+  SUBMITTED
+  SUCCESS
+  FAILED
+}
+
+model Batch {
+  id             String      @id @default(cuid())
+  ownerPublicKey String
+  network        Network
+  assetCode      String? // null = native XLM
+  assetIssuer    String?
+  sourceAccount  String
+  status         BatchStatus @default(DRAFT)
+  csvFileName    String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  recipients Recipient[]
+  attempts   PaymentAttempt[]
+
+  @@index([ownerPublicKey])
+}
+
+model Recipient {
+  id       String @id @default(cuid())
+  batchId  String
+  batch    Batch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rowIndex Int
+
+  destination String
+  amount      Decimal
+  memo        String?
+
+  addressValid     Boolean @default(false)
+  isDuplicate      Boolean @default(false)
+  accountExists    Boolean?
+  hasTrustline     Boolean?
+  trustlineLimitOk Boolean?
+
+  status       LineItemStatus @default(PENDING)
+  errorMessage String?
+
+  attemptItems PaymentAttemptItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([batchId])
+}
+
