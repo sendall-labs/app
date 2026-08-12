@@ -54,3 +54,52 @@ function createAccountDestination(destination: string): string {
  * `sourceAccount` in place, so chunks must be submitted in the same
  * order they were built.
  */
+export function buildPaymentChunks(params: {
+  network: Network;
+  sourceAccount: Account;
+  asset: Asset | null; // null = native XLM
+  recipients: ChunkRecipient[];
+  baseFeeStroops?: string;
+}): TxChunk[] {
+  const { network, sourceAccount, asset, recipients, baseFeeStroops } = params;
+  const passphrase = getNetworkPassphrase(network);
+  const groups = chunkArray(recipients, MAX_OPS_PER_TX);
+
+  return groups.map((group, chunkIndex) => {
+    const builder = new TransactionBuilder(sourceAccount, {
+      fee: baseFeeStroops ?? BASE_FEE,
+      networkPassphrase: passphrase,
+    }).setTimeout(TX_TIMEOUT_SECONDS);
+
+    const items: { recipientId: string; operationIndex: number }[] = [];
+
+    group.forEach((r, operationIndex) => {
+      if (!asset && r.needsCreateAccount) {
+        builder.addOperation(
+          Operation.createAccount({
+            destination: createAccountDestination(r.destination),
+            startingBalance: r.amount,
+          })
+        );
+      } else {
+        builder.addOperation(
+          Operation.payment({
+            destination: r.destination,
+            asset: asset ?? Asset.native(),
+            amount: r.amount,
+          })
+        );
+      }
+      items.push({ recipientId: r.recipientId, operationIndex });
+    });
+
+    const tx = builder.build();
+
+    return {
+      chunkIndex,
+      xdr: tx.toXDR(),
+      operationCount: group.length,
+      items,
+    };
+  });
+}
