@@ -50,3 +50,121 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * Bulk balance + trustline check for a list of recipients, using Stellar
+ * RPC's getLedgerEntries batch lookup instead of one Horizon call per
+ * account. Missing entries mean "account/trustline doesn't exist" — RPC
+ * only returns entries that are present.
+ */
+export async function checkRecipients(
+  network: Network,
+  targets: CheckTarget[],
+  asset: Asset | null // null = native XLM
+): Promise<Map<string, CheckResult>> {
+  const { Keypair, MuxedAccount, StrKey } = await import("@stellar/stellar-sdk");
+  const server = getRpcServer(network);
+
+  // Ledger entries are keyed by the underlying ed25519 account, not the
+  // muxed (M...) id, so muxed destinations resolve to their base G address.
+  const rawKeyByDestination = new Map<string, Buffer>();
+  for (const t of targets) {
+    const baseAddress = StrKey.isValidMed25519PublicKey(t.destination)
+      ? MuxedAccount.fromAddress(t.destination, "0").baseAccount().accountId()
+      : t.destination;
+    rawKeyByDestination.set(t.destination, Keypair.fromPublicKey(baseAddress).rawPublicKey());
+  }
+
+  const keys: xdr.LedgerKey[] = [];
+  const keyLookup = new Map<string, { destination: string; kind: "account" | "trustline" }>();
+
+  for (const t of targets) {
+    const raw = rawKeyByDestination.get(t.destination)!;
+    const aKey = buildAccountKey(raw);
+    keys.push(aKey);
+    keyLookup.set(aKey.toXDR("base64"), { destination: t.destination, kind: "account" });
+
+    if (asset) {
+      const tKey = buildTrustlineKey(raw, asset);
+      keys.push(tKey);
+      keyLookup.set(tKey.toXDR("base64"), { destination: t.destination, kind: "trustline" });
+    }
+  }
+
+  const foundAccounts = new Set<string>();
+  const trustlines = new Map<string, { balance: bigint; limit: bigint }>();
+
+  for (const batch of chunk(keys, MAX_KEYS_PER_CALL)) {
+    const { entries } = await server.getLedgerEntries(...batch);
+    for (const entry of entries) {
+      const meta = keyLookup.get(entry.key.toXDR("base64"));
+      if (!meta) continue;
+      if (meta.kind === "account") {
+        foundAccounts.add(meta.destination);
+      } else {
+        const tl = entry.val.trustLine();
+        trustlines.set(meta.destination, {
+          balance: BigInt(tl.balance().toString()),
+          limit: BigInt(tl.limit().toString()),
+        });
+      }
+    }
+  }
+
+  const results = new Map<string, CheckResult>();
+  for (const t of targets) {
+    const accountExists = foundAccounts.has(t.destination);
+    const amountStroops = BigInt(Math.round(Number(t.amount) * 1e7));
+
+    if (!asset) {
+      const needsCreateAccount = !accountExists;
+      const ok =
+        accountExists ||
+        Number(t.amount) >= MIN_ACCOUNT_RESERVE_XLM;
+      results.set(t.destination, {
+        destination: t.destination,
+        accountExists,
+        hasTrustline: null,
+        trustlineLimitOk: null,
+        needsCreateAccount,
+        ok,
+        reason: ok ? undefined : `New account needs >= ${MIN_ACCOUNT_RESERVE_XLM} XLM to be created`,
+      });
+      continue;
+    }
+
+    if (!accountExists) {
+      results.set(t.destination, {
+        destination: t.destination,
+        accountExists: false,
+        hasTrustline: false,
+        trustlineLimitOk: false,
+        needsCreateAccount: false,
+        ok: false,
+        reason: "Destination account does not exist",
+      });
+      continue;
+    }
+
+    const tl = trustlines.get(t.destination);
+    const hasTrustline = !!tl;
+    const trustlineLimitOk = hasTrustline
+      ? tl!.balance + amountStroops <= tl!.limit
+      : false;
+
+    results.set(t.destination, {
+      destination: t.destination,
+      accountExists: true,
+      hasTrustline,
+      trustlineLimitOk,
+      needsCreateAccount: false,
+      ok: hasTrustline && trustlineLimitOk,
+      reason: !hasTrustline
+        ? "No trustline for this asset"
+        : !trustlineLimitOk
+          ? "Payment would exceed trustline limit"
+          : undefined,
+    });
+  }
+
+  return results;
+}
