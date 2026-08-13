@@ -29,3 +29,48 @@ function decodePerOperationResults(
   });
 }
 
+/**
+ * Submits a signed transaction envelope and polls until it reaches a
+ * terminal state. Runs backend-side (not client-only) so a batch keeps
+ * an audit trail even if the browser tab closes mid-submission.
+ */
+export async function submitAndPoll(
+  network: Network,
+  signedXdr: string
+): Promise<SubmitResult> {
+  const server = getRpcServer(network);
+  const { TransactionBuilder } = await import("@stellar/stellar-sdk");
+  const { getNetworkPassphrase } = await import("./client");
+  const tx = TransactionBuilder.fromXDR(signedXdr, getNetworkPassphrase(network));
+
+  const sendResult = await server.sendTransaction(tx);
+  if (sendResult.status === "ERROR") {
+    return {
+      hash: sendResult.hash,
+      status: "FAILED",
+      perOperation: sendResult.errorResult
+        ? decodePerOperationResults(sendResult.errorResult)
+        : [],
+    };
+  }
+
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    const getResult = await server.getTransaction(sendResult.hash);
+
+    if (getResult.status === rpc.Api.GetTransactionStatus.NOT_FOUND) continue;
+
+    const perOperation = getResult.resultXdr
+      ? decodePerOperationResults(getResult.resultXdr)
+      : [];
+
+    return {
+      hash: sendResult.hash,
+      status: getResult.status === rpc.Api.GetTransactionStatus.SUCCESS ? "SUCCESS" : "FAILED",
+      resultXdr: getResult.resultXdr?.toXDR("base64"),
+      perOperation,
+    };
+  }
+
+  return { hash: sendResult.hash, status: "TIMEOUT", perOperation: [] };
+}
