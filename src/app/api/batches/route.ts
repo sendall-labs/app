@@ -31,3 +31,47 @@ export async function GET() {
   return NextResponse.json({ batches });
 }
 
+export async function POST(request: Request) {
+  const publicKey = await getSessionPublicKey();
+  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  const parsed = createBatchSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.message }, { status: 400 });
+  }
+  const { csvText, csvFileName, network, sourceAccount, assetCode, assetIssuer } = parsed.data;
+
+  const { rows, errors: parseErrors, truncated } = parseRecipientsCsv(csvText);
+  const validated = validateRecipients(rows);
+
+  const batch = await prisma.batch.create({
+    data: {
+      ownerPublicKey: publicKey,
+      network,
+      sourceAccount,
+      assetCode: assetCode || null,
+      assetIssuer: assetIssuer || null,
+      csvFileName,
+      status: "VALIDATED",
+      recipients: {
+        create: validated.map((r) => ({
+          rowIndex: r.rowIndex,
+          destination: r.destination,
+          amount: r.amount,
+          memo: r.memo,
+          addressValid: r.addressValid,
+          isDuplicate: r.isDuplicate,
+          status: r.addressValid && r.amountValid ? "PENDING" : "VALIDATION_FAILED",
+          errorMessage: r.errorMessage,
+        })),
+      },
+    },
+    include: { recipients: true },
+  });
+
+  return NextResponse.json({
+    batch,
+    parseErrors,
+    truncated,
+  });
+}
