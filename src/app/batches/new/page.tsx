@@ -54,3 +54,51 @@ export default function NewBatchPage() {
     }
   }, [address, assetCode, assetIssuer, file, network, router]);
 
+  return (
+    <div className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-12">
+      <h1 className="text-2xl font-bold">New batch</h1>
+
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium">Recipients CSV</label>
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
+        />
+        <p className="text-xs text-neutral-500">
+          Columns: <code>destination</code>, <code>amount</code>, optional <code>memo</code>.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">Asset code (blank = XLM)</label>
+          <input
+            value={assetCode}
+            onChange={(e) => setAssetCode(e.target.value.toUpperCase())}
+            placeholder="USDC"
+            className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">Asset issuer</label>
+          <input
+            value={assetIssuer}
+            onChange={(e) => setAssetIssuer(e.target.value)}
+            placeholder="G..."
+            className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleSubmit}
+        disabled={submitting}
+        className="rounded-md bg-neutral-900 px-6 py-3 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+      >
+        {submitting ? "Uploading…" : "Upload & validate"}
+      </button>
+    </div>
+  );
+}
