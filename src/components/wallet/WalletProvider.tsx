@@ -44,3 +44,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setAddress(null);
   }, []);
 
+  const signTransaction = useCallback(
+    async (xdr: string) => {
+      if (!address) throw new Error("No wallet connected");
+      const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
+        address,
+        networkPassphrase: networkToKitNetwork(network),
+      });
+      return signedTxXdr;
+    },
+    [address, network]
+  );
+
+  const value = useMemo(
+    () => ({ network, setNetwork, address, connecting, connect, disconnect, signTransaction }),
+    [network, address, connecting, connect, disconnect, signTransaction]
+  );
+
+  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
+}
+
+export function useWallet(): WalletContextValue {
+  const ctx = useContext(WalletContext);
+  if (!ctx) throw new Error("useWallet must be used within a WalletProvider");
+  return ctx;
+}
