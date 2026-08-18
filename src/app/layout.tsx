@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MultiSend",
+  title: "Sendall",
   description: "Non-custodial bulk payments for Stellar",
 };
 

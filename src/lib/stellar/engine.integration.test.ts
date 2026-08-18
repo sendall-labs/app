@@ -8,7 +8,7 @@ import { getRpcServer, getNetworkPassphrase } from "./client";
 // Full engine round-trip against real Testnet: check -> build -> sign ->
 // submit -> poll -> decode. This is the concrete on-chain evidence the
 // SOW asks for (real tx hash, real balance movement).
-describe.skipIf(!!process.env.CI)("MultiSend engine (Testnet e2e)", () => {
+describe.skipIf(!!process.env.CI)("Sendall engine (Testnet e2e)", () => {
   const source = Keypair.random();
   const destA = Keypair.random();
   const destB = Keypair.random(); // left unfunded: exercises createAccount path

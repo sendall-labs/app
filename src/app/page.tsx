@@ -5,7 +5,7 @@ export default function Home() {
   return (
     <div className="flex flex-1 flex-col">
       <header className="flex items-center justify-between border-b border-neutral-200 px-6 py-4 dark:border-neutral-800">
-        <span className="text-lg font-semibold">MultiSend</span>
+        <span className="text-lg font-semibold">Sendall</span>
         <ConnectButton />
       </header>
 
