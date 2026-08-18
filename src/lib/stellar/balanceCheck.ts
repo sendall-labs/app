@@ -15,12 +15,23 @@ export type CheckTarget = {
 export type CheckResult = {
   destination: string;
   accountExists: boolean;
+  currentBalance: string | null; // null = account/trustline doesn't exist
   hasTrustline: boolean | null; // null = not applicable (native XLM)
   trustlineLimitOk: boolean | null;
   needsCreateAccount: boolean; // native XLM to a non-existent account
   ok: boolean;
   reason?: string;
 };
+
+/** Formats raw stroops (1 XLM = 10,000,000 stroops) as a fixed 7-decimal string. */
+function stroopsToXlmString(stroops: bigint): string {
+  const stroopsPerXlm = BigInt(10_000_000);
+  const negative = stroops < BigInt(0);
+  const abs = negative ? -stroops : stroops;
+  const whole = abs / stroopsPerXlm;
+  const frac = (abs % stroopsPerXlm).toString().padStart(7, "0");
+  return `${negative ? "-" : ""}${whole}.${frac}`;
+}
 
 function buildAccountKey(destinationEd25519RawPublicKey: Buffer) {
   const accountId = xdr.PublicKey.publicKeyTypeEd25519(
@@ -91,6 +102,7 @@ export async function checkRecipients(
   }
 
   const foundAccounts = new Set<string>();
+  const nativeBalances = new Map<string, bigint>();
   const trustlines = new Map<string, { balance: bigint; limit: bigint }>();
 
   for (const batch of chunk(keys, MAX_KEYS_PER_CALL)) {
@@ -100,6 +112,7 @@ export async function checkRecipients(
       if (!meta) continue;
       if (meta.kind === "account") {
         foundAccounts.add(meta.destination);
+        nativeBalances.set(meta.destination, BigInt(entry.val.account().balance().toString()));
       } else {
         const tl = entry.val.trustLine();
         trustlines.set(meta.destination, {
@@ -120,9 +133,11 @@ export async function checkRecipients(
       const ok =
         accountExists ||
         Number(t.amount) >= MIN_ACCOUNT_RESERVE_XLM;
+      const nativeBalance = nativeBalances.get(t.destination);
       results.set(t.destination, {
         destination: t.destination,
         accountExists,
+        currentBalance: nativeBalance !== undefined ? stroopsToXlmString(nativeBalance) : null,
         hasTrustline: null,
         trustlineLimitOk: null,
         needsCreateAccount,
@@ -136,6 +151,7 @@ export async function checkRecipients(
       results.set(t.destination, {
         destination: t.destination,
         accountExists: false,
+        currentBalance: null,
         hasTrustline: false,
         trustlineLimitOk: false,
         needsCreateAccount: false,
@@ -154,6 +170,7 @@ export async function checkRecipients(
     results.set(t.destination, {
       destination: t.destination,
       accountExists: true,
+      currentBalance: tl ? stroopsToXlmString(tl.balance) : null,
       hasTrustline,
       trustlineLimitOk,
       needsCreateAccount: false,

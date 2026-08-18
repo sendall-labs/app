@@ -87,6 +87,7 @@ model Recipient {
   addressValid     Boolean @default(false)
   isDuplicate      Boolean @default(false)
   accountExists    Boolean?
+  currentBalance   Decimal?
   hasTrustline     Boolean?
   trustlineLimitOk Boolean?
 
