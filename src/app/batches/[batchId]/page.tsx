@@ -18,6 +18,9 @@ type Recipient = {
   errorMessage: string | null;
 };
 
+type AttemptItem = { recipientId: string; status: string };
+type Attempt = { txHash: string | null; items: AttemptItem[] };
+
 type Batch = {
   id: string;
   status: string;
@@ -26,6 +29,7 @@ type Batch = {
   assetIssuer: string | null;
   sourceAccount: string;
   recipients: Recipient[];
+  attempts: Attempt[];
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -37,6 +41,13 @@ const STATUS_LABEL: Record<string, string> = {
   SUCCESS: "Sent",
   FAILED: "Failed",
 };
+
+const BUSY_BATCH_STATUSES = new Set(["CHECKING", "SUBMITTING"]);
+
+function explorerTxUrl(network: string, txHash: string): string {
+  const segment = network === "PUBLIC" ? "public" : "testnet";
+  return `https://stellar.expert/explorer/${segment}/tx/${txHash}`;
+}
 
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
@@ -62,6 +73,15 @@ export default function BatchReviewPage() {
       cancelled = true;
     };
   }, [batchId]);
+
+  // Poll while the batch is mid-flight (checks running or a submit in
+  // progress from another tab) so the status/table reflect the outcome
+  // without the user having to refresh manually.
+  useEffect(() => {
+    if (!batch || !BUSY_BATCH_STATUSES.has(batch.status)) return;
+    const interval = setInterval(load, 2500);
+    return () => clearInterval(interval);
+  }, [batch, load]);
 
   const runChecks = useCallback(async () => {
     setBusy("checks");
@@ -135,8 +155,16 @@ export default function BatchReviewPage() {
   const failedCount = batch.recipients.filter((r) => r.status === "FAILED").length;
   const pendingCount = batch.recipients.filter((r) => r.status === "PENDING").length;
 
+  const txHashByRecipient = new Map<string, string>();
+  for (const attempt of batch.attempts) {
+    if (!attempt.txHash) continue;
+    for (const item of attempt.items) {
+      if (item.status === "SUCCESS") txHashByRecipient.set(item.recipientId, attempt.txHash);
+    }
+  }
+
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-12">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-12">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Batch review</h1>
@@ -196,7 +224,19 @@ export default function BatchReviewPage() {
                 </td>
                 <td className="px-3 py-2">{r.amount}</td>
                 <td className="px-3 py-2">{STATUS_LABEL[r.status] ?? r.status}</td>
-                <td className="px-3 py-2 text-neutral-500">{r.errorMessage ?? ""}</td>
+                <td className="px-3 py-2 text-neutral-500">
+                  {r.errorMessage}
+                  {txHashByRecipient.has(r.id) && (
+                    <a
+                      href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      view tx ↗
+                    </a>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

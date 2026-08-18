@@ -9,7 +9,7 @@ export default function Home() {
         <ConnectButton />
       </header>
 
-      <main className="mx-auto flex max-w-2xl flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
         <h1 className="text-3xl font-bold">Bulk Stellar payments, without the backend</h1>
         <p className="text-neutral-600 dark:text-neutral-400">
           Upload a recipient list, validate addresses and trustlines, sign with your

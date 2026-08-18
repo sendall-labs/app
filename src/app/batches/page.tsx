@@ -23,7 +23,7 @@ export default function BatchesPage() {
   }, []);
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-12">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-12">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Your batches</h1>
         <Link

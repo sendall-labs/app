@@ -28,6 +28,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     initWalletKit(network);
   }, [network]);
 
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.publicKey) setAddress(data.publicKey);
+      })
+      .catch(() => {});
+  }, []);
+
   const connect = useCallback(async () => {
     setConnecting(true);
     try {
