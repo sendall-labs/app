@@ -343,9 +343,16 @@ export default function BatchReviewPage() {
     [editedRows, batch]
   );
 
+  // Editing a row that doesn't exist in confirmRows yet (the always-present
+  // trailing blank row — see `displayConfirmRows` below) appends it instead
+  // of no-op'ing, so typing straight into that last row is how a new
+  // recipient gets added — no separate "add" affordance to click first.
   const updateRow = useCallback(
     (id: string, field: "destination" | "amount", value: string) => {
-      const next = confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
+      const exists = confirmRows.some((r) => r.id === id);
+      const next = exists
+        ? confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+        : [...confirmRows, { id, destination: "", amount: "", memo: null, [field]: value }];
       setEditedRows(next);
       scheduleSave(next);
     },
@@ -361,13 +368,6 @@ export default function BatchReviewPage() {
     },
     [confirmRows, persistRows]
   );
-
-  const addRow = useCallback(() => {
-    setEditedRows([
-      ...confirmRows,
-      { id: `new-${Date.now()}-${confirmRows.length}`, destination: "", amount: "", memo: null },
-    ]);
-  }, [confirmRows]);
 
   const patchNetworkAsset = useCallback(
     async (next: { network: string; assetCode: string; assetIssuer: string }) => {
@@ -493,6 +493,13 @@ export default function BatchReviewPage() {
   const recipientCount = draftRows.filter((r) => r.destination.trim() || r.amount.trim()).length;
   const recipientById = new Map(batch.recipients.map((r) => [r.id, r]));
   const stageIndex = STAGES.findIndex((s) => s.key === displayedStage);
+  // A blank row always trails the list so typing straight into it is how
+  // you add a recipient — id keyed off length so it's stable while blank
+  // and rolls to a fresh one the instant it gets real content and a new
+  // trailing row is needed.
+  const displayConfirmRows = canEdit
+    ? [...confirmRows, { id: `new-blank-${confirmRows.length}`, destination: "", amount: "", memo: null }]
+    : confirmRows;
 
   return (
     <div className="flex flex-col gap-6">
@@ -554,7 +561,7 @@ export default function BatchReviewPage() {
               <button
                 onClick={refreshAll}
                 disabled={anyBusy}
-                className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
+                className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
               </button>
@@ -563,14 +570,14 @@ export default function BatchReviewPage() {
               <button
                 onClick={prepareAndSend}
                 disabled={anyBusy}
-                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
+                className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
               </button>
             )}
           </div>
           <EditableRecipientsTable
-            rows={confirmRows}
+            rows={displayConfirmRows}
             recipientById={recipientById}
             batch={batch}
             canEdit={canEdit}
@@ -581,7 +588,6 @@ export default function BatchReviewPage() {
             txHashByRecipient={txHashByRecipient}
             updateRow={updateRow}
             removeRow={removeRow}
-            addRow={addRow}
             flushPendingSave={flushPendingSave}
           />
           {readyCount === 0 && (
@@ -599,7 +605,7 @@ export default function BatchReviewPage() {
               <button
                 onClick={retryFailed}
                 disabled={anyBusy}
-                className="rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:opacity-50"
+                className="cursor-pointer rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
               </button>
@@ -626,14 +632,14 @@ export default function BatchReviewPage() {
         <button
           onClick={() => setPinnedStage(STAGES[stageIndex - 1].key)}
           disabled={stageIndex === 0}
-          className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-40"
+          className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Back
         </button>
         <button
           onClick={() => setPinnedStage(STAGES[stageIndex + 1].key)}
           disabled={stageIndex === STAGES.length - 1}
-          className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-40"
+          className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40"
         >
           Next →
         </button>
@@ -758,7 +764,6 @@ function EditableRecipientsTable({
   txHashByRecipient,
   updateRow,
   removeRow,
-  addRow,
   flushPendingSave,
 }: {
   rows: EditableRow[];
@@ -772,7 +777,6 @@ function EditableRecipientsTable({
   txHashByRecipient: Map<string, string>;
   updateRow: (id: string, field: "destination" | "amount", value: string) => void;
   removeRow: (id: string) => void;
-  addRow: () => void;
   flushPendingSave: () => void;
 }) {
   return (
@@ -795,6 +799,7 @@ function EditableRecipientsTable({
             {rows.map((row, i) => {
               const r = recipientById.get(row.id);
               const isNew = !r;
+              const isBlank = !row.destination.trim() && !row.amount.trim();
               return (
                 <tr key={row.id} className="border-b border-hairline last:border-0">
                   <td className="px-3 py-3 tabular-nums text-ink-muted">{r?.rowIndex ?? i + 1}</td>
@@ -820,7 +825,7 @@ function EditableRecipientsTable({
                           <button
                             onClick={() => copyAddress(row.destination)}
                             title="Copy address"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                            className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
                           >
                             <CopyIcon />
                           </button>
@@ -891,16 +896,16 @@ function EditableRecipientsTable({
                           onClick={() => refreshOne(r.id)}
                           disabled={busyRowIds.has(r.id) || bulkBusy !== null}
                           title="Refresh this address"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
+                          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           <RefreshIcon spinning={busyRowIds.has(r.id)} />
                         </button>
                       )}
-                      {canEdit && (
+                      {canEdit && !isBlank && (
                         <button
                           onClick={() => removeRow(row.id)}
                           title="Remove recipient"
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-danger-soft hover:text-danger"
+                          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-lg leading-none text-ink-faint hover:bg-danger-soft hover:text-danger"
                         >
                           ×
                         </button>
@@ -913,13 +918,6 @@ function EditableRecipientsTable({
           </tbody>
         </table>
       </div>
-      {canEdit && (
-        <div className="border-t border-hairline px-3 py-3">
-          <button onClick={addRow} className="text-sm font-medium text-accent hover:underline">
-            + Add recipient
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -971,7 +969,7 @@ function RecipientsTable({
                         <button
                           onClick={() => copyAddress(r.destination)}
                           title="Copy address"
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
                         >
                           <CopyIcon />
                         </button>
@@ -1022,7 +1020,7 @@ function RecipientsTable({
                       onClick={() => refreshOne(r.id)}
                       disabled={busyRowIds.has(r.id) || bulkBusy !== null}
                       title="Refresh this address"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
+                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RefreshIcon spinning={busyRowIds.has(r.id)} />
                     </button>

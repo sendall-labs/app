@@ -40,11 +40,13 @@ export function BatchStageNav({
             disabled={!enabled}
             onClick={() => onSelect?.(stage.key)}
             className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+              enabled ? "cursor-pointer" : "cursor-default"
+            } ${
               isCurrent
                 ? "border-accent text-ink"
                 : isDone
                   ? "border-transparent text-ink-muted hover:text-ink"
-                  : `border-transparent text-ink-faint ${enabled ? "hover:text-ink-muted" : "cursor-default"}`
+                  : `border-transparent text-ink-faint ${enabled ? "hover:text-ink-muted" : ""}`
             }`}
           >
             <span

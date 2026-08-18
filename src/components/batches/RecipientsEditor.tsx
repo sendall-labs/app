@@ -73,14 +73,14 @@ export function RecipientsEditor({
                 onChange(EXAMPLE_ROWS);
                 onFileNameChange?.(null);
               }}
-              className="text-accent hover:underline"
+              className="cursor-pointer text-accent hover:underline"
             >
               Show example
             </button>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-accent hover:underline"
+              className="cursor-pointer text-accent hover:underline"
             >
               Upload CSV
             </button>
