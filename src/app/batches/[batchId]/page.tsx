@@ -371,6 +371,12 @@ export default function BatchReviewPage() {
         ? confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r))
         : [...confirmRows, { id, destination: "", amount: DEFAULT_AMOUNT, memo: null, [field]: value }];
       setEditedRows(next);
+      // Prepare's textarea caches its own raw text so it never reformats
+      // mid-typing (see prepareText) — but that means it won't pick up a
+      // change made here on its own. Drop the cache so switching to
+      // Prepare re-derives from the freshly saved rows instead of showing
+      // whatever was there before this edit.
+      setPrepareText(null);
       scheduleSave(next);
     },
     [confirmRows, scheduleSave]
@@ -380,6 +386,7 @@ export default function BatchReviewPage() {
     (id: string) => {
       const next = confirmRows.filter((r) => r.id !== id);
       setEditedRows(next);
+      setPrepareText(null);
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       persistRows(next);
     },
@@ -391,6 +398,7 @@ export default function BatchReviewPage() {
       if (!amount.trim() || confirmRows.length === 0) return;
       const next = confirmRows.map((r) => ({ ...r, amount: amount.trim() }));
       setEditedRows(next);
+      setPrepareText(null);
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       persistRows(next);
     },
