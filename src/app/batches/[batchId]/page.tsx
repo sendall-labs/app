@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
-import { CSV_HEADER } from "@/components/batches/RecipientsEditor";
 
 type Recipient = {
   id: string;
@@ -63,6 +62,7 @@ const STATUS_PILL: Record<string, string> = {
 
 const RECHECKABLE_STATUSES = new Set(["PENDING", "READY", "CHECK_FAILED"]);
 const BUSY_BATCH_STATUSES = new Set(["CHECKING", "SUBMITTING"]);
+const SAVE_DEBOUNCE_MS = 700;
 
 type Stage = "prepare" | "confirm" | "send";
 const STAGES: { key: Stage; label: string }[] = [
@@ -86,9 +86,9 @@ function explorerTxUrl(network: string, txHash: string): string {
   return `https://stellar.expert/explorer/${segment}/tx/${txHash}`;
 }
 
-function truncateAddress(address: string): string {
-  if (address.length <= 14) return address;
-  return `${address.slice(0, 6)}…${address.slice(-6)}`;
+function explorerAccountUrl(network: string, address: string): string {
+  const segment = network === "PUBLIC" ? "public" : "testnet";
+  return `https://stellar.expert/explorer/${segment}/account/${address}`;
 }
 
 function recipientToRow(r: Recipient): EditableRow {
@@ -110,6 +110,24 @@ function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+      <path d="M4.5 13V4.5A1.5 1.5 0 0 1 6 3h8.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4">
+      <path d="M8.5 4.5H4.5v11h11v-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.5 10.5 15.5 4.5M11 4.5h4.5V9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
   const { signTransaction } = useWallet();
@@ -117,11 +135,14 @@ export default function BatchReviewPage() {
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
   const [busyRowIds, setBusyRowIds] = useState<Set<string>>(new Set());
   // null = mirror the server copy (recomputed below); non-null = unsaved
-  // local edits. Kept this way (instead of syncing via an effect) so a
-  // background poll updating `batch` never clobbers in-progress edits.
+  // local edits, autosaved on a short debounce. Kept this way (instead of
+  // syncing via an effect) so a background poll updating `batch` never
+  // clobbers what the user is mid-typing.
   const [editedRows, setEditedRows] = useState<EditableRow[] | null>(null);
   const [saving, setSaving] = useState(false);
-  const dirty = editedRows !== null;
+  const [pinnedStage, setPinnedStage] = useState<Stage | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoCheckingRef = useRef(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/batches/${batchId}`);
@@ -158,63 +179,6 @@ export default function BatchReviewPage() {
     [editedRows, batch]
   );
 
-  const updateRow = useCallback(
-    (id: string, field: "destination" | "amount", value: string) => {
-      setEditedRows((prev) => (prev ?? rows).map((r) => (r.id === id ? { ...r, [field]: value } : r)));
-    },
-    [rows]
-  );
-
-  const removeRow = useCallback(
-    (id: string) => {
-      setEditedRows((prev) => (prev ?? rows).filter((r) => r.id !== id));
-    },
-    [rows]
-  );
-
-  const addRow = useCallback(() => {
-    setEditedRows((prev) => {
-      const base = prev ?? rows;
-      return [...base, { id: `new-${Date.now()}-${base.length}`, destination: "", amount: "", memo: null }];
-    });
-  }, [rows]);
-
-  const discardEdits = useCallback(() => {
-    setEditedRows(null);
-  }, []);
-
-  const saveEdits = useCallback(async () => {
-    const nonEmpty = rows.filter((r) => r.destination.trim() || r.amount.trim());
-    if (nonEmpty.length === 0) {
-      toast.error("Add at least one address and amount");
-      return;
-    }
-    const csvText = `${CSV_HEADER}\n${nonEmpty
-      .map((r) => [r.destination.trim(), r.amount.trim(), r.memo].filter((v) => v != null && v !== "").join(","))
-      .join("\n")}`;
-
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/batches/${batchId}/recipients`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvText }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
-      const { batch: updated, parseErrors } = await res.json();
-      setBatch(updated);
-      setEditedRows(null);
-      if (parseErrors?.length) {
-        toast.warning(`${parseErrors.length} row(s) skipped — missing address/amount`);
-      }
-      toast.success("Recipients updated");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save recipients");
-    } finally {
-      setSaving(false);
-    }
-  }, [batchId, rows]);
-
   const runChecks = useCallback(
     async (recipientIds: string[] | undefined, mode: "row" | "bulk") => {
       if (mode === "row" && recipientIds) {
@@ -230,7 +194,7 @@ export default function BatchReviewPage() {
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "Check failed");
         await load();
-        if (mode === "bulk") toast.success("Balance/trustline checks complete");
+        if (mode === "bulk" && recipientIds) toast.success("Balance/trustline checks complete");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Check failed");
       } finally {
@@ -248,6 +212,98 @@ export default function BatchReviewPage() {
     [batchId, load]
   );
 
+  // Whenever the batch lands in VALIDATED (just created, or just edited)
+  // automatically re-validate addresses + account existence instead of
+  // waiting for the user to press a button — covers both "Upload &
+  // validate" on creation and any later inline edit.
+  useEffect(() => {
+    if (!batch || batch.status !== "VALIDATED" || autoCheckingRef.current) return;
+    const checkableIds = batch.recipients
+      .filter((r) => r.addressValid && !r.isDuplicate && r.status === "PENDING")
+      .map((r) => r.id);
+    if (checkableIds.length === 0) return;
+    // Deferred a tick so this effect doesn't set state synchronously —
+    // runChecks' first line flips bulkBusy immediately.
+    const timer = setTimeout(() => {
+      autoCheckingRef.current = true;
+      runChecks(undefined, "bulk").finally(() => {
+        autoCheckingRef.current = false;
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [batch, runChecks]);
+
+  const persistRows = useCallback(
+    async (rowsToSave: EditableRow[]) => {
+      const nonEmpty = rowsToSave.filter((r) => r.destination.trim() || r.amount.trim());
+      if (nonEmpty.length === 0) return;
+
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}/recipients`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rows: nonEmpty.map((r) => ({
+              id: r.id.startsWith("new-") ? undefined : r.id,
+              destination: r.destination.trim(),
+              amount: r.amount.trim(),
+              memo: r.memo || undefined,
+            })),
+          }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
+        const { batch: updated } = await res.json();
+        setBatch(updated);
+        setEditedRows(null);
+        setPinnedStage(null);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to save recipients");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId]
+  );
+
+  const scheduleSave = useCallback(
+    (next: EditableRow[]) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => persistRows(next), SAVE_DEBOUNCE_MS);
+    },
+    [persistRows]
+  );
+
+  const flushPendingSave = useCallback(() => {
+    if (!saveTimerRef.current) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    persistRows(rows);
+  }, [persistRows, rows]);
+
+  const updateRow = useCallback(
+    (id: string, field: "destination" | "amount", value: string) => {
+      const next = rows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
+      setEditedRows(next);
+      scheduleSave(next);
+    },
+    [rows, scheduleSave]
+  );
+
+  const removeRow = useCallback(
+    (id: string) => {
+      const next = rows.filter((r) => r.id !== id);
+      setEditedRows(next);
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      persistRows(next);
+    },
+    [rows, persistRows]
+  );
+
+  const addRow = useCallback(() => {
+    setEditedRows([...rows, { id: `new-${Date.now()}-${rows.length}`, destination: "", amount: "", memo: null }]);
+  }, [rows]);
+
   const refreshOne = useCallback((id: string) => runChecks([id], "row"), [runChecks]);
 
   const refreshAll = useCallback(() => {
@@ -258,6 +314,13 @@ export default function BatchReviewPage() {
     if (ids.length === 0) return;
     return runChecks(ids, "bulk");
   }, [batch, runChecks]);
+
+  const copyAddress = useCallback((address: string) => {
+    navigator.clipboard.writeText(address).then(
+      () => toast.success("Address copied"),
+      () => toast.error("Couldn't copy address")
+    );
+  }, []);
 
   const prepareAndSend = useCallback(async () => {
     setBulkBusy("send");
@@ -277,6 +340,7 @@ export default function BatchReviewPage() {
       }
 
       await load();
+      setPinnedStage(null);
       toast.success("Batch submitted");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Send failed");
@@ -303,6 +367,7 @@ export default function BatchReviewPage() {
       }
 
       await load();
+      setPinnedStage(null);
       toast.success("Retry complete");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Retry failed");
@@ -322,8 +387,8 @@ export default function BatchReviewPage() {
 
   const readyCount = batch.recipients.filter((r) => r.status === "READY").length;
   const failedCount = batch.recipients.filter((r) => r.status === "FAILED").length;
-  const pendingCount = batch.recipients.filter((r) => r.status === "PENDING").length;
-  const currentStage = stageFromStatus(batch.status);
+  const displayedStage = pinnedStage ?? stageFromStatus(batch.status);
+  const stageIndex = STAGES.findIndex((s) => s.key === displayedStage);
 
   const txHashByRecipient = new Map<string, string>();
   for (const attempt of batch.attempts) {
@@ -338,18 +403,18 @@ export default function BatchReviewPage() {
     <div className="flex flex-col gap-6">
       <nav className="flex gap-1 border-b border-hairline">
         {STAGES.map((stage, i) => {
-          const stageIndex = STAGES.findIndex((s) => s.key === currentStage);
-          const isCurrent = stage.key === currentStage;
+          const isCurrent = i === stageIndex;
           const isDone = i < stageIndex;
           return (
-            <div
+            <button
               key={stage.key}
-              className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium ${
+              onClick={() => setPinnedStage(stage.key)}
+              className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
                 isCurrent
                   ? "border-accent text-ink"
                   : isDone
-                    ? "border-transparent text-ink-muted"
-                    : "border-transparent text-ink-faint"
+                    ? "border-transparent text-ink-muted hover:text-ink"
+                    : "border-transparent text-ink-faint hover:text-ink-muted"
               }`}
             >
               <span
@@ -364,75 +429,17 @@ export default function BatchReviewPage() {
                 {isDone ? "✓" : i + 1}
               </span>
               {stage.label}
-            </div>
+            </button>
           );
         })}
       </nav>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
-          <p className="mt-1 text-sm text-ink-muted">{batch.csvFileName ?? batch.id}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {dirty ? (
-            <>
-              <button
-                onClick={saveEdits}
-                disabled={saving}
-                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                onClick={discardEdits}
-                disabled={saving}
-                className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
-              >
-                Discard
-              </button>
-            </>
-          ) : (
-            <>
-              {refreshableCount > 0 && (
-                <button
-                  onClick={refreshAll}
-                  disabled={anyBusy}
-                  className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
-                >
-                  {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
-                </button>
-              )}
-              {pendingCount > 0 && (
-                <button
-                  onClick={() => runChecks(undefined, "bulk")}
-                  disabled={anyBusy}
-                  className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
-                >
-                  {bulkBusy === "checks" ? "Checking…" : "Run checks"}
-                </button>
-              )}
-              {readyCount > 0 && (
-                <button
-                  onClick={prepareAndSend}
-                  disabled={anyBusy}
-                  className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
-                >
-                  {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
-                </button>
-              )}
-              {failedCount > 0 && (
-                <button
-                  onClick={retryFailed}
-                  disabled={anyBusy}
-                  className="rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:opacity-50"
-                >
-                  {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
-                </button>
-              )}
-            </>
-          )}
-        </div>
+      <div>
+        <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
+        <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
+          {batch.csvFileName ?? batch.id}
+          {saving && <span className="text-xs text-ink-faint">Saving…</span>}
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -449,126 +456,88 @@ export default function BatchReviewPage() {
         />
       </div>
 
-      <div className="rounded-lg border border-hairline bg-surface">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-faint">
-                <th className="px-5 py-3 font-medium">#</th>
-                <th className="px-5 py-3 font-medium">Address</th>
-                <th className="px-5 py-3 font-medium">Amount</th>
-                <th className="px-5 py-3 font-medium">Account created</th>
-                <th className="px-5 py-3 font-medium">Current balance</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Note</th>
-                <th className="px-5 py-3 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, i) => {
-                const r = recipientById.get(row.id);
-                const isNew = !r;
-                return (
-                  <tr key={row.id} className="border-b border-hairline last:border-0">
-                    <td className="px-5 py-3 tabular-nums text-ink-muted">{r?.rowIndex ?? i + 1}</td>
-                    <td className="px-5 py-3">
-                      {canEdit ? (
-                        <input
-                          value={row.destination}
-                          onChange={(e) => updateRow(row.id, "destination", e.target.value)}
-                          placeholder="G..."
-                          className="w-full min-w-[220px] rounded border border-transparent bg-transparent px-2 py-1 font-mono text-xs text-ink hover:border-hairline focus:border-accent focus:outline-none"
-                        />
-                      ) : (
-                        <span className="font-mono text-xs text-ink">{truncateAddress(row.destination)}</span>
-                      )}
-                      {r?.isDuplicate && (
-                        <span className="ml-2 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
-                          dup
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      {canEdit ? (
-                        <input
-                          value={row.amount}
-                          onChange={(e) => updateRow(row.id, "amount", e.target.value)}
-                          placeholder="0"
-                          inputMode="decimal"
-                          className="w-24 rounded border border-transparent bg-transparent px-2 py-1 tabular-nums text-ink hover:border-hairline focus:border-accent focus:outline-none"
-                        />
-                      ) : (
-                        <span className="tabular-nums text-ink">{row.amount}</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-ink-muted">
-                      {isNew ? "—" : r.accountExists === null ? "—" : r.accountExists ? "Yes" : "No"}
-                    </td>
-                    <td className="px-5 py-3 tabular-nums text-ink-muted">
-                      {isNew ? "—" : (r.currentBalance ?? "—")}
-                    </td>
-                    <td className="px-5 py-3">
-                      {isNew ? (
-                        <span className="rounded-full bg-sidebar px-2.5 py-1 text-xs font-medium text-ink-muted">
-                          New
-                        </span>
-                      ) : (
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
-                          {STATUS_LABEL[r.status] ?? r.status}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-ink-muted">
-                      {r?.errorMessage}
-                      {r && txHashByRecipient.has(r.id) && (
-                        <a
-                          href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-mono text-xs text-accent hover:underline"
-                        >
-                          view tx ↗
-                        </a>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {r && r.addressValid && !r.isDuplicate && RECHECKABLE_STATUSES.has(r.status) && (
-                          <button
-                            onClick={() => refreshOne(r.id)}
-                            disabled={busyRowIds.has(r.id) || bulkBusy !== null || dirty}
-                            title="Refresh this address"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
-                          >
-                            <RefreshIcon spinning={busyRowIds.has(r.id)} />
-                          </button>
-                        )}
-                        {canEdit && (
-                          <button
-                            onClick={() => removeRow(row.id)}
-                            title="Remove recipient"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:border-danger/30 hover:bg-danger-soft hover:text-danger"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {displayedStage === "prepare" && (
+        <PrepareSection
+          rows={rows}
+          recipientById={recipientById}
+          canEdit={canEdit}
+          updateRow={updateRow}
+          removeRow={removeRow}
+          addRow={addRow}
+          flushPendingSave={flushPendingSave}
+        />
+      )}
+
+      {displayedStage === "confirm" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap justify-end gap-2">
+            {refreshableCount > 0 && (
+              <button
+                onClick={refreshAll}
+                disabled={anyBusy}
+                className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
+              >
+                {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
+              </button>
+            )}
+            {readyCount > 0 && (
+              <button
+                onClick={prepareAndSend}
+                disabled={anyBusy}
+                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
+              >
+                {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
+              </button>
+            )}
+          </div>
+          <RecipientsTable
+            rows={rows}
+            recipientById={recipientById}
+            batch={batch}
+            busyRowIds={busyRowIds}
+            bulkBusy={bulkBusy}
+            refreshOne={refreshOne}
+            copyAddress={copyAddress}
+            txHashByRecipient={txHashByRecipient}
+          />
+          {readyCount === 0 && (
+            <p className="text-sm text-ink-muted">
+              Nothing&apos;s ready to send yet — fix or refresh recipients on the Prepare tab first.
+            </p>
+          )}
         </div>
-        {canEdit && (
-          <button
-            onClick={addRow}
-            className="w-full border-t border-dashed border-hairline px-5 py-3 text-left text-sm font-medium text-accent hover:bg-sidebar"
-          >
-            + Add recipient
-          </button>
-        )}
-      </div>
+      )}
+
+      {displayedStage === "send" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap justify-end gap-2">
+            {failedCount > 0 && (
+              <button
+                onClick={retryFailed}
+                disabled={anyBusy}
+                className="rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:opacity-50"
+              >
+                {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
+              </button>
+            )}
+          </div>
+          <RecipientsTable
+            rows={rows}
+            recipientById={recipientById}
+            batch={batch}
+            busyRowIds={busyRowIds}
+            bulkBusy={bulkBusy}
+            refreshOne={refreshOne}
+            copyAddress={copyAddress}
+            txHashByRecipient={txHashByRecipient}
+          />
+          {batch.attempts.length === 0 && (
+            <p className="text-sm text-ink-muted">
+              Nothing&apos;s been sent yet — head to Confirm and sign to submit this batch.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -578,6 +547,222 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
     <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
       <p className="text-xs uppercase tracking-wide text-ink-faint">{label}</p>
       <div className="mt-1.5 text-sm font-medium text-ink">{value}</div>
+    </div>
+  );
+}
+
+function PrepareSection({
+  rows,
+  recipientById,
+  canEdit,
+  updateRow,
+  removeRow,
+  addRow,
+  flushPendingSave,
+}: {
+  rows: EditableRow[];
+  recipientById: Map<string, Recipient>;
+  canEdit: boolean;
+  updateRow: (id: string, field: "destination" | "amount", value: string) => void;
+  removeRow: (id: string) => void;
+  addRow: () => void;
+  flushPendingSave: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface p-6">
+      <label className="text-sm font-medium text-ink">Addresses with amounts</label>
+      <div className="mt-3 flex flex-col divide-y divide-hairline rounded-md border border-hairline">
+        {rows.map((row, i) => {
+          const r = recipientById.get(row.id);
+          const isNew = !r;
+          return (
+            <div key={row.id} className="flex items-center gap-2 px-3 py-2">
+              <span className="w-6 shrink-0 text-xs tabular-nums text-ink-faint">{i + 1}</span>
+              {canEdit ? (
+                <input
+                  value={row.destination}
+                  onChange={(e) => updateRow(row.id, "destination", e.target.value)}
+                  onBlur={flushPendingSave}
+                  placeholder="G..."
+                  className={`min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1.5 font-mono text-xs hover:border-hairline focus:border-accent focus:outline-none ${
+                    isNew ? "text-ink" : r.addressValid ? "text-success" : "text-danger"
+                  }`}
+                />
+              ) : (
+                <span
+                  className={`min-w-0 flex-1 truncate px-2 py-1.5 font-mono text-xs ${
+                    r?.addressValid ? "text-success" : "text-danger"
+                  }`}
+                >
+                  {row.destination}
+                </span>
+              )}
+              {canEdit ? (
+                <input
+                  value={row.amount}
+                  onChange={(e) => updateRow(row.id, "amount", e.target.value)}
+                  onBlur={flushPendingSave}
+                  placeholder="0"
+                  inputMode="decimal"
+                  className="w-20 shrink-0 rounded border border-transparent bg-transparent px-2 py-1.5 tabular-nums text-ink hover:border-hairline focus:border-accent focus:outline-none"
+                />
+              ) : (
+                <span className="w-20 shrink-0 px-2 py-1.5 tabular-nums text-ink">{row.amount}</span>
+              )}
+              {r?.isDuplicate && (
+                <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
+                  dup
+                </span>
+              )}
+              {canEdit && (
+                <button
+                  onClick={() => removeRow(row.id)}
+                  title="Remove recipient"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-danger-soft hover:text-danger"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {canEdit && (
+        <button onClick={addRow} className="mt-3 text-sm font-medium text-accent hover:underline">
+          + Add recipient
+        </button>
+      )}
+      <p className="mt-4 text-xs text-ink-faint">
+        Addresses and account status are checked automatically as you edit — switch to Confirm once
+        recipients look ready.
+      </p>
+    </div>
+  );
+}
+
+function RecipientsTable({
+  rows,
+  recipientById,
+  batch,
+  busyRowIds,
+  bulkBusy,
+  refreshOne,
+  copyAddress,
+  txHashByRecipient,
+}: {
+  rows: EditableRow[];
+  recipientById: Map<string, Recipient>;
+  batch: Batch;
+  busyRowIds: Set<string>;
+  bulkBusy: string | null;
+  refreshOne: (id: string) => void;
+  copyAddress: (address: string) => void;
+  txHashByRecipient: Map<string, string>;
+}) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-faint">
+              <th className="w-10 px-3 py-3 font-medium">#</th>
+              <th className="px-3 py-3 font-medium">Address</th>
+              <th className="w-20 px-3 py-3 font-medium">Amount</th>
+              <th className="w-20 px-3 py-3 font-medium">Created</th>
+              <th className="w-28 px-3 py-3 font-medium">Balance</th>
+              <th className="w-24 px-3 py-3 font-medium">Status</th>
+              <th className="px-3 py-3 font-medium">Note</th>
+              <th className="w-12 px-3 py-3 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const r = recipientById.get(row.id);
+              const isNew = !r;
+              return (
+                <tr key={row.id} className="border-b border-hairline last:border-0">
+                  <td className="px-3 py-3 tabular-nums text-ink-muted">{r?.rowIndex ?? i + 1}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-1">
+                      <span className={`font-mono text-xs ${r?.addressValid ? "text-success" : "text-danger"}`}>
+                        {row.destination}
+                      </span>
+                      {row.destination && (
+                        <>
+                          <button
+                            onClick={() => copyAddress(row.destination)}
+                            title="Copy address"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          >
+                            <CopyIcon />
+                          </button>
+                          <a
+                            href={explorerAccountUrl(batch.network, row.destination)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open in explorer"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          >
+                            <ExternalLinkIcon />
+                          </a>
+                        </>
+                      )}
+                      {r?.isDuplicate && (
+                        <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
+                          dup
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 tabular-nums text-ink">{row.amount}</td>
+                  <td className="px-3 py-3 text-ink-muted">
+                    {isNew ? "—" : r.accountExists === null ? "—" : r.accountExists ? "Yes" : "No"}
+                  </td>
+                  <td className="px-3 py-3 tabular-nums text-ink-muted">
+                    {isNew ? "—" : (r.currentBalance ?? "—")}
+                  </td>
+                  <td className="px-3 py-3">
+                    {isNew ? (
+                      <span className="rounded-full bg-sidebar px-2.5 py-1 text-xs font-medium text-ink-muted">
+                        New
+                      </span>
+                    ) : (
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-ink-muted">
+                    {r?.errorMessage}
+                    {r && txHashByRecipient.has(r.id) && (
+                      <a
+                        href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-xs text-accent hover:underline"
+                      >
+                        view tx ↗
+                      </a>
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    {r && r.addressValid && !r.isDuplicate && RECHECKABLE_STATUSES.has(r.status) && (
+                      <button
+                        onClick={() => refreshOne(r.id)}
+                        disabled={busyRowIds.has(r.id) || bulkBusy !== null}
+                        title="Refresh this address"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
+                      >
+                        <RefreshIcon spinning={busyRowIds.has(r.id)} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
