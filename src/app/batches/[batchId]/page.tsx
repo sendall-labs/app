@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
+import { BatchStageNav, stageFromStatus, type Stage } from "@/components/batches/BatchStageNav";
 
 type Recipient = {
   id: string;
@@ -64,19 +65,6 @@ const STATUS_PILL: Record<string, string> = {
 const RECHECKABLE_STATUSES = new Set(["PENDING", "READY", "CHECK_FAILED"]);
 const BUSY_BATCH_STATUSES = new Set(["CHECKING", "SUBMITTING"]);
 const SAVE_DEBOUNCE_MS = 700;
-
-type Stage = "prepare" | "confirm" | "send";
-const STAGES: { key: Stage; label: string }[] = [
-  { key: "prepare", label: "Prepare" },
-  { key: "confirm", label: "Confirm" },
-  { key: "send", label: "Send" },
-];
-
-function stageFromStatus(status: string): Stage {
-  if (status === "SUBMITTING" || status === "PARTIAL_FAILURE" || status === "COMPLETED") return "send";
-  if (status === "READY") return "confirm";
-  return "prepare";
-}
 
 function statusPillClass(status: string): string {
   return STATUS_PILL[status] ?? "bg-warning-soft text-warning";
@@ -435,7 +423,6 @@ export default function BatchReviewPage() {
   const readyCount = batch.recipients.filter((r) => r.status === "READY").length;
   const failedCount = batch.recipients.filter((r) => r.status === "FAILED").length;
   const displayedStage = pinnedStage ?? stageFromStatus(batch.status);
-  const stageIndex = STAGES.findIndex((s) => s.key === displayedStage);
 
   const txHashByRecipient = new Map<string, string>();
   for (const attempt of batch.attempts) {
@@ -448,38 +435,7 @@ export default function BatchReviewPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <nav className="flex gap-1 border-b border-hairline">
-        {STAGES.map((stage, i) => {
-          const isCurrent = i === stageIndex;
-          const isDone = i < stageIndex;
-          return (
-            <button
-              key={stage.key}
-              onClick={() => setPinnedStage(stage.key)}
-              className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
-                isCurrent
-                  ? "border-accent text-ink"
-                  : isDone
-                    ? "border-transparent text-ink-muted hover:text-ink"
-                    : "border-transparent text-ink-faint hover:text-ink-muted"
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
-                  isCurrent
-                    ? "bg-accent text-accent-ink"
-                    : isDone
-                      ? "bg-success-soft text-success"
-                      : "bg-sidebar text-ink-faint"
-                }`}
-              >
-                {isDone ? "✓" : i + 1}
-              </span>
-              {stage.label}
-            </button>
-          );
-        })}
-      </nav>
+      <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
         <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>

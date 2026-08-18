@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor, CSV_HEADER } from "@/components/batches/RecipientsEditor";
+import { BatchStageNav } from "@/components/batches/BatchStageNav";
 
 const inputClass =
   "rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
@@ -61,6 +62,8 @@ export default function NewBatchPage() {
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
+      <BatchStageNav current="prepare" />
+
       <div>
         <h1 className="font-serif text-2xl font-semibold text-ink">New batch</h1>
         <p className="mt-1 text-sm text-ink-muted">
