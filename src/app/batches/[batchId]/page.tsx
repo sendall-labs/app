@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
-import { BatchStageNav, stageFromStatus, type Stage } from "@/components/batches/BatchStageNav";
+import { BatchStageNav, STAGES, stageFromStatus, type Stage } from "@/components/batches/BatchStageNav";
 
 type Recipient = {
   id: string;
@@ -155,6 +155,11 @@ export default function BatchReviewPage() {
   // reformats — and inserts characters like a trailing "," — out from under
   // the user's cursor.
   const [prepareText, setPrepareText] = useState<string | null>(null);
+  // Same null-mirrors-server pattern, but for the Confirm screen's editable
+  // table (destination/amount inputs per row) — separate from prepareText
+  // since a table of discrete inputs isn't vulnerable to the round-trip
+  // reformatting issue a single free-text field is.
+  const [editedRows, setEditedRows] = useState<EditableRow[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [pinnedStage, setPinnedStage] = useState<Stage | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,6 +295,7 @@ export default function BatchReviewPage() {
             if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
             const { batch: updated } = await res.json();
             setBatch(updated);
+            setEditedRows(null);
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to save recipients");
           } finally {
@@ -331,6 +337,37 @@ export default function BatchReviewPage() {
     },
     [batch, scheduleSave]
   );
+
+  const confirmRows: EditableRow[] = useMemo(
+    () => editedRows ?? (batch ? batch.recipients.map(recipientToRow) : []),
+    [editedRows, batch]
+  );
+
+  const updateRow = useCallback(
+    (id: string, field: "destination" | "amount", value: string) => {
+      const next = confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
+      setEditedRows(next);
+      scheduleSave(next);
+    },
+    [confirmRows, scheduleSave]
+  );
+
+  const removeRow = useCallback(
+    (id: string) => {
+      const next = confirmRows.filter((r) => r.id !== id);
+      setEditedRows(next);
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      persistRows(next);
+    },
+    [confirmRows, persistRows]
+  );
+
+  const addRow = useCallback(() => {
+    setEditedRows([
+      ...confirmRows,
+      { id: `new-${Date.now()}-${confirmRows.length}`, destination: "", amount: "", memo: null },
+    ]);
+  }, [confirmRows]);
 
   const patchNetworkAsset = useCallback(
     async (next: { network: string; assetCode: string; assetIssuer: string }) => {
@@ -454,6 +491,8 @@ export default function BatchReviewPage() {
   const prepareDisplayText = prepareText ?? rowsToText(savedRows);
   const draftRows = prepareText !== null ? textToRows(prepareText, savedRows) : savedRows;
   const recipientCount = draftRows.filter((r) => r.destination.trim() || r.amount.trim()).length;
+  const recipientById = new Map(batch.recipients.map((r) => [r.id, r]));
+  const stageIndex = STAGES.findIndex((s) => s.key === displayedStage);
 
   return (
     <div className="flex flex-col gap-6">
@@ -530,14 +569,20 @@ export default function BatchReviewPage() {
               </button>
             )}
           </div>
-          <RecipientsTable
-            recipients={batch.recipients}
+          <EditableRecipientsTable
+            rows={confirmRows}
+            recipientById={recipientById}
             batch={batch}
+            canEdit={canEdit}
             busyRowIds={busyRowIds}
             bulkBusy={bulkBusy}
             refreshOne={refreshOne}
             copyAddress={copyAddress}
             txHashByRecipient={txHashByRecipient}
+            updateRow={updateRow}
+            removeRow={removeRow}
+            addRow={addRow}
+            flushPendingSave={flushPendingSave}
           />
           {readyCount === 0 && (
             <p className="text-sm text-ink-muted">
@@ -576,6 +621,23 @@ export default function BatchReviewPage() {
           )}
         </div>
       )}
+
+      <div className="flex items-center justify-between border-t border-hairline pt-4">
+        <button
+          onClick={() => setPinnedStage(STAGES[stageIndex - 1].key)}
+          disabled={stageIndex === 0}
+          className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-40"
+        >
+          ← Back
+        </button>
+        <button
+          onClick={() => setPinnedStage(STAGES[stageIndex + 1].key)}
+          disabled={stageIndex === STAGES.length - 1}
+          className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-40"
+        >
+          Next →
+        </button>
+      </div>
     </div>
   );
 }
@@ -680,6 +742,184 @@ function PrepareSection({
         Addresses and account status are checked automatically as you edit — switch to Confirm once
         recipients look ready.
       </p>
+    </div>
+  );
+}
+
+function EditableRecipientsTable({
+  rows,
+  recipientById,
+  batch,
+  canEdit,
+  busyRowIds,
+  bulkBusy,
+  refreshOne,
+  copyAddress,
+  txHashByRecipient,
+  updateRow,
+  removeRow,
+  addRow,
+  flushPendingSave,
+}: {
+  rows: EditableRow[];
+  recipientById: Map<string, Recipient>;
+  batch: Batch;
+  canEdit: boolean;
+  busyRowIds: Set<string>;
+  bulkBusy: string | null;
+  refreshOne: (id: string) => void;
+  copyAddress: (address: string) => void;
+  txHashByRecipient: Map<string, string>;
+  updateRow: (id: string, field: "destination" | "amount", value: string) => void;
+  removeRow: (id: string) => void;
+  addRow: () => void;
+  flushPendingSave: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-faint">
+              <th className="w-10 px-3 py-3 font-medium">#</th>
+              <th className="px-3 py-3 font-medium">Address</th>
+              <th className="w-24 px-3 py-3 font-medium">Amount</th>
+              <th className="w-20 px-3 py-3 font-medium">Created</th>
+              <th className="w-28 px-3 py-3 font-medium">Balance</th>
+              <th className="w-24 px-3 py-3 font-medium">Status</th>
+              <th className="px-3 py-3 font-medium">Note</th>
+              <th className="w-20 px-3 py-3 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const r = recipientById.get(row.id);
+              const isNew = !r;
+              return (
+                <tr key={row.id} className="border-b border-hairline last:border-0">
+                  <td className="px-3 py-3 tabular-nums text-ink-muted">{r?.rowIndex ?? i + 1}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-1">
+                      {canEdit ? (
+                        <input
+                          value={row.destination}
+                          onChange={(e) => updateRow(row.id, "destination", e.target.value)}
+                          onBlur={flushPendingSave}
+                          placeholder="G..."
+                          className={`min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-1 font-mono text-xs hover:border-hairline focus:border-accent focus:outline-none ${
+                            isNew ? "text-ink" : r.addressValid ? "text-success" : "text-danger"
+                          }`}
+                        />
+                      ) : (
+                        <span className={`font-mono text-xs ${r?.addressValid ? "text-success" : "text-danger"}`}>
+                          {row.destination}
+                        </span>
+                      )}
+                      {row.destination && (
+                        <>
+                          <button
+                            onClick={() => copyAddress(row.destination)}
+                            title="Copy address"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          >
+                            <CopyIcon />
+                          </button>
+                          <a
+                            href={explorerAccountUrl(batch.network, row.destination)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open in explorer"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          >
+                            <ExternalLinkIcon />
+                          </a>
+                        </>
+                      )}
+                      {r?.isDuplicate && (
+                        <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
+                          dup
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 tabular-nums text-ink">
+                    {canEdit ? (
+                      <input
+                        value={row.amount}
+                        onChange={(e) => updateRow(row.id, "amount", e.target.value)}
+                        onBlur={flushPendingSave}
+                        placeholder="0"
+                        inputMode="decimal"
+                        className="w-full rounded border border-transparent bg-transparent px-1 py-1 tabular-nums hover:border-hairline focus:border-accent focus:outline-none"
+                      />
+                    ) : (
+                      row.amount
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-ink-muted">
+                    {isNew ? "—" : r.accountExists === null ? "—" : r.accountExists ? "Yes" : "No"}
+                  </td>
+                  <td className="px-3 py-3 tabular-nums text-ink-muted">{isNew ? "—" : (r.currentBalance ?? "—")}</td>
+                  <td className="px-3 py-3">
+                    {isNew ? (
+                      <span className="rounded-full bg-sidebar px-2.5 py-1 text-xs font-medium text-ink-muted">
+                        New
+                      </span>
+                    ) : (
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-ink-muted">
+                    {r?.errorMessage}
+                    {r && txHashByRecipient.has(r.id) && (
+                      <a
+                        href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-xs text-accent hover:underline"
+                      >
+                        view tx ↗
+                      </a>
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-1">
+                      {r && r.addressValid && !r.isDuplicate && RECHECKABLE_STATUSES.has(r.status) && (
+                        <button
+                          onClick={() => refreshOne(r.id)}
+                          disabled={busyRowIds.has(r.id) || bulkBusy !== null}
+                          title="Refresh this address"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
+                        >
+                          <RefreshIcon spinning={busyRowIds.has(r.id)} />
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button
+                          onClick={() => removeRow(row.id)}
+                          title="Remove recipient"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-danger-soft hover:text-danger"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && (
+        <div className="border-t border-hairline px-3 py-3">
+          <button onClick={addRow} className="text-sm font-medium text-accent hover:underline">
+            + Add recipient
+          </button>
+        </div>
+      )}
     </div>
   );
 }
