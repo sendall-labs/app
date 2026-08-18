@@ -28,6 +28,7 @@ type Batch = {
   assetCode: string | null;
   assetIssuer: string | null;
   sourceAccount: string;
+  csvFileName: string | null;
   recipients: Recipient[];
   attempts: Attempt[];
 };
@@ -42,11 +43,27 @@ const STATUS_LABEL: Record<string, string> = {
   FAILED: "Failed",
 };
 
+const STATUS_PILL: Record<string, string> = {
+  READY: "bg-success-soft text-success",
+  SUCCESS: "bg-success-soft text-success",
+  FAILED: "bg-danger-soft text-danger",
+  CHECK_FAILED: "bg-danger-soft text-danger",
+  VALIDATION_FAILED: "bg-danger-soft text-danger",
+};
+
+function statusPillClass(status: string): string {
+  return STATUS_PILL[status] ?? "bg-warning-soft text-warning";
+}
+
 const BUSY_BATCH_STATUSES = new Set(["CHECKING", "SUBMITTING"]);
 
 function explorerTxUrl(network: string, txHash: string): string {
   const segment = network === "PUBLIC" ? "public" : "testnet";
   return `https://stellar.expert/explorer/${segment}/tx/${txHash}`;
+}
+
+function truncateAddress(address: string): string {
+  return `${address.slice(0, 6)}…${address.slice(-6)}`;
 }
 
 export default function BatchReviewPage() {
@@ -149,7 +166,7 @@ export default function BatchReviewPage() {
     }
   }, [batchId, load, signTransaction]);
 
-  if (!batch) return <div className="px-6 py-12">Loading…</div>;
+  if (!batch) return <p className="text-sm text-ink-muted">Loading…</p>;
 
   const readyCount = batch.recipients.filter((r) => r.status === "READY").length;
   const failedCount = batch.recipients.filter((r) => r.status === "FAILED").length;
@@ -164,20 +181,18 @@ export default function BatchReviewPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-12">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Batch review</h1>
-          <p className="text-sm text-neutral-500">
-            {batch.network} · {batch.assetCode ?? "XLM"} · status: {batch.status}
-          </p>
+          <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
+          <p className="mt-1 text-sm text-ink-muted">{batch.csvFileName ?? batch.id}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {pendingCount > 0 && (
             <button
               onClick={runChecks}
               disabled={busy !== null}
-              className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:opacity-50"
             >
               {busy === "checks" ? "Checking…" : "Run checks"}
             </button>
@@ -186,7 +201,7 @@ export default function BatchReviewPage() {
             <button
               onClick={prepareAndSend}
               disabled={busy !== null}
-              className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
             >
               {busy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
             </button>
@@ -195,7 +210,7 @@ export default function BatchReviewPage() {
             <button
               onClick={retryFailed}
               disabled={busy !== null}
-              className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+              className="rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:opacity-50"
             >
               {busy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
             </button>
@@ -203,45 +218,78 @@ export default function BatchReviewPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-md border border-neutral-200 dark:border-neutral-800">
-        <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-left dark:bg-neutral-900">
-            <tr>
-              <th className="px-3 py-2">#</th>
-              <th className="px-3 py-2">Destination</th>
-              <th className="px-3 py-2">Amount</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {batch.recipients.map((r) => (
-              <tr key={r.id} className="border-t border-neutral-100 dark:border-neutral-800">
-                <td className="px-3 py-2">{r.rowIndex}</td>
-                <td className="px-3 py-2 font-mono text-xs">
-                  {r.destination.slice(0, 6)}…{r.destination.slice(-6)}
-                  {r.isDuplicate && <span className="ml-2 text-amber-600">dup</span>}
-                </td>
-                <td className="px-3 py-2">{r.amount}</td>
-                <td className="px-3 py-2">{STATUS_LABEL[r.status] ?? r.status}</td>
-                <td className="px-3 py-2 text-neutral-500">
-                  {r.errorMessage}
-                  {txHashByRecipient.has(r.id) && (
-                    <a
-                      href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      view tx ↗
-                    </a>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <InfoField label="Network" value={batch.network} />
+        <InfoField label="Asset" value={batch.assetCode ?? "XLM"} />
+        <InfoField label="Recipients" value={String(batch.recipients.length)} />
+        <InfoField
+          label="Status"
+          value={
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(batch.status)}`}>
+              {batch.status}
+            </span>
+          }
+        />
       </div>
+
+      <div className="rounded-lg border border-hairline bg-surface">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-faint">
+                <th className="px-5 py-3 font-medium">#</th>
+                <th className="px-5 py-3 font-medium">Destination</th>
+                <th className="px-5 py-3 font-medium">Amount</th>
+                <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium">Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batch.recipients.map((r) => (
+                <tr key={r.id} className="border-b border-hairline last:border-0">
+                  <td className="px-5 py-3 tabular-nums text-ink-muted">{r.rowIndex}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-ink">
+                    {truncateAddress(r.destination)}
+                    {r.isDuplicate && (
+                      <span className="ml-2 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
+                        dup
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 tabular-nums text-ink">{r.amount}</td>
+                  <td className="px-5 py-3">
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
+                      {STATUS_LABEL[r.status] ?? r.status}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3 text-ink-muted">
+                    {r.errorMessage}
+                    {txHashByRecipient.has(r.id) && (
+                      <a
+                        href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-xs text-accent hover:underline"
+                      >
+                        view tx ↗
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <p className="text-xs uppercase tracking-wide text-ink-faint">{label}</p>
+      <div className="mt-1.5 text-sm font-medium text-ink">{value}</div>
     </div>
   );
 }

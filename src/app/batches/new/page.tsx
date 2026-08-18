@@ -10,6 +10,9 @@ function countCsvRows(text: string): number {
   return Math.max(0, lines.length - 1); // minus header row
 }
 
+const inputClass =
+  "rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
+
 export default function NewBatchPage() {
   const router = useRouter();
   const { network, setNetwork, address } = useWallet();
@@ -66,67 +69,74 @@ export default function NewBatchPage() {
   }, [address, assetCode, assetIssuer, file, network, router]);
 
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-6 py-12">
-      <h1 className="text-2xl font-bold">New batch</h1>
-
-      <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium">Recipients CSV</label>
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
-          className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
-        />
-        <p className="text-xs text-neutral-500">
-          Columns: <code>destination</code>, <code>amount</code>, optional <code>memo</code>.
+    <div className="flex max-w-xl flex-col gap-6">
+      <div>
+        <h1 className="font-serif text-2xl font-semibold text-ink">New batch</h1>
+        <p className="mt-1 text-sm text-ink-muted">
+          Upload a recipient list, pick a network and asset, then review before sending.
         </p>
-        {rowCount !== null && (
-          <p className="text-xs text-neutral-600 dark:text-neutral-300">
-            {rowCount} recipient row{rowCount === 1 ? "" : "s"} detected.
+      </div>
+
+      <div className="rounded-lg border border-hairline bg-surface p-6">
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-ink">Recipients CSV</label>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+            className={inputClass}
+          />
+          <p className="text-xs text-ink-faint">
+            Columns: <code>destination</code>, <code>amount</code>, optional <code>memo</code>.
           </p>
-        )}
-      </div>
+          {rowCount !== null && (
+            <p className="text-xs text-ink-muted">
+              {rowCount} recipient row{rowCount === 1 ? "" : "s"} detected.
+            </p>
+          )}
+        </div>
 
-      <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium">Network</label>
-        <select
-          value={network}
-          onChange={(e) => setNetwork(e.target.value as typeof network)}
-          className="rounded-md border border-neutral-300 bg-transparent p-2 text-sm dark:border-neutral-700"
+        <div className="mt-6 flex flex-col gap-2">
+          <label className="text-sm font-medium text-ink">Network</label>
+          <select
+            value={network}
+            onChange={(e) => setNetwork(e.target.value as typeof network)}
+            className={inputClass}
+          >
+            <option value="TESTNET">Testnet</option>
+            <option value="PUBLIC">Public (Mainnet)</option>
+          </select>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-ink">Asset code (blank = XLM)</label>
+            <input
+              value={assetCode}
+              onChange={(e) => setAssetCode(e.target.value.toUpperCase())}
+              placeholder="USDC"
+              className={inputClass}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-ink">Asset issuer</label>
+            <input
+              value={assetIssuer}
+              onChange={(e) => setAssetIssuer(e.target.value)}
+              placeholder="G..."
+              className={inputClass}
+            />
+          </div>
+        </div>
+
+        <button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="mt-6 w-full rounded-md bg-accent px-6 py-3 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
         >
-          <option value="TESTNET">Testnet</option>
-          <option value="PUBLIC">Public (Mainnet)</option>
-        </select>
+          {submitting ? "Uploading…" : "Upload & validate"}
+        </button>
       </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium">Asset code (blank = XLM)</label>
-          <input
-            value={assetCode}
-            onChange={(e) => setAssetCode(e.target.value.toUpperCase())}
-            placeholder="USDC"
-            className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium">Asset issuer</label>
-          <input
-            value={assetIssuer}
-            onChange={(e) => setAssetIssuer(e.target.value)}
-            placeholder="G..."
-            className="rounded-md border border-neutral-300 p-2 text-sm dark:border-neutral-700"
-          />
-        </div>
-      </div>
-
-      <button
-        onClick={handleSubmit}
-        disabled={submitting}
-        className="rounded-md bg-neutral-900 px-6 py-3 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-      >
-        {submitting ? "Uploading…" : "Upload & validate"}
-      </button>
     </div>
   );
 }

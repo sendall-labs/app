@@ -63,7 +63,7 @@ export function ConnectButton() {
     return (
       <button
         onClick={handleLogout}
-        className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+        className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
       >
         {truncate(session)} · Disconnect
       </button>
@@ -74,7 +74,7 @@ export function ConnectButton() {
     <button
       onClick={handleLogin}
       disabled={loading}
-      className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+      className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:opacity-50"
     >
       {loading ? "Connecting…" : "Connect Wallet"}
     </button>
