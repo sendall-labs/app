@@ -81,7 +81,11 @@ export async function PUT(
         const data = {
           rowIndex: i + 1,
           destination: v.destination,
-          amount: v.amount,
+          // `amount` is a required Decimal column — an empty or non-numeric
+          // draft (still being typed, or just garbage) can't be stored
+          // as-is. The row is already flagged VALIDATION_FAILED in that
+          // case, so the actual value here is a placeholder pending a fix.
+          amount: v.amountValid ? v.amount : "0",
           // Prisma treats `undefined` in update data as "leave unchanged",
           // not "clear it" — explicit null is required to actually clear a
           // stale memo/errorMessage from a previous revision of this row.

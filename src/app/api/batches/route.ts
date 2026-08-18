@@ -57,7 +57,10 @@ export async function POST(request: Request) {
         create: validated.map((r) => ({
           rowIndex: r.rowIndex,
           destination: r.destination,
-          amount: r.amount,
+          // `amount` is a required Decimal column — a non-numeric value
+          // can't be stored as-is; the row's already flagged
+          // VALIDATION_FAILED below, so this is just a safe placeholder.
+          amount: r.amountValid ? r.amount : "0",
           memo: r.memo,
           addressValid: r.addressValid,
           isDuplicate: r.isDuplicate,
