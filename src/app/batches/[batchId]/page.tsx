@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
+import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
 
 type Recipient = {
   id: string;
@@ -93,6 +94,31 @@ function explorerAccountUrl(network: string, address: string): string {
 
 function recipientToRow(r: Recipient): EditableRow {
   return { id: r.id, destination: r.destination, amount: r.amount, memo: r.memo };
+}
+
+function rowToLine(r: EditableRow): string {
+  const parts = [r.destination, r.amount];
+  if (r.memo) parts.push(r.memo);
+  return parts.join(",");
+}
+
+function rowsToText(rows: EditableRow[]): string {
+  return rows.map(rowToLine).join("\n");
+}
+
+/** Parses "destination,amount,memo" lines back into rows, preserving each
+ * existing row's id by position so unedited/edited-in-place rows don't get
+ * needlessly deleted and recreated server-side. */
+function textToRows(text: string, prevRows: EditableRow[]): EditableRow[] {
+  return text.split(/\r?\n/).map((line, i) => {
+    const [rawDestination = "", rawAmount = "", ...rest] = line.split(",");
+    return {
+      id: prevRows[i]?.id ?? `new-${Date.now()}-${i}`,
+      destination: rawDestination.trim(),
+      amount: rawAmount.trim(),
+      memo: rest.length > 0 ? rest.join(",").trim() || null : null,
+    };
+  });
 }
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
@@ -269,7 +295,10 @@ export default function BatchReviewPage() {
   const scheduleSave = useCallback(
     (next: EditableRow[]) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => persistRows(next), SAVE_DEBOUNCE_MS);
+      saveTimerRef.current = setTimeout(() => {
+        saveTimerRef.current = null;
+        persistRows(next);
+      }, SAVE_DEBOUNCE_MS);
     },
     [persistRows]
   );
@@ -281,28 +310,14 @@ export default function BatchReviewPage() {
     persistRows(rows);
   }, [persistRows, rows]);
 
-  const updateRow = useCallback(
-    (id: string, field: "destination" | "amount", value: string) => {
-      const next = rows.map((r) => (r.id === id ? { ...r, [field]: value } : r));
+  const handlePrepareTextChange = useCallback(
+    (text: string) => {
+      const next = textToRows(text, rows);
       setEditedRows(next);
       scheduleSave(next);
     },
     [rows, scheduleSave]
   );
-
-  const removeRow = useCallback(
-    (id: string) => {
-      const next = rows.filter((r) => r.id !== id);
-      setEditedRows(next);
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      persistRows(next);
-    },
-    [rows, persistRows]
-  );
-
-  const addRow = useCallback(() => {
-    setEditedRows([...rows, { id: `new-${Date.now()}-${rows.length}`, destination: "", amount: "", memo: null }]);
-  }, [rows]);
 
   const refreshOne = useCallback((id: string) => runChecks([id], "row"), [runChecks]);
 
@@ -459,11 +474,8 @@ export default function BatchReviewPage() {
       {displayedStage === "prepare" && (
         <PrepareSection
           rows={rows}
-          recipientById={recipientById}
           canEdit={canEdit}
-          updateRow={updateRow}
-          removeRow={removeRow}
-          addRow={addRow}
+          onTextChange={handlePrepareTextChange}
           flushPendingSave={flushPendingSave}
         />
       )}
@@ -553,85 +565,19 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
 
 function PrepareSection({
   rows,
-  recipientById,
   canEdit,
-  updateRow,
-  removeRow,
-  addRow,
+  onTextChange,
   flushPendingSave,
 }: {
   rows: EditableRow[];
-  recipientById: Map<string, Recipient>;
   canEdit: boolean;
-  updateRow: (id: string, field: "destination" | "amount", value: string) => void;
-  removeRow: (id: string) => void;
-  addRow: () => void;
+  onTextChange: (text: string) => void;
   flushPendingSave: () => void;
 }) {
+  const text = useMemo(() => rowsToText(rows), [rows]);
   return (
     <div className="rounded-lg border border-hairline bg-surface p-6">
-      <label className="text-sm font-medium text-ink">Addresses with amounts</label>
-      <div className="mt-3 flex flex-col divide-y divide-hairline rounded-md border border-hairline">
-        {rows.map((row, i) => {
-          const r = recipientById.get(row.id);
-          const isNew = !r;
-          return (
-            <div key={row.id} className="flex items-center gap-2 px-3 py-2">
-              <span className="w-6 shrink-0 text-xs tabular-nums text-ink-faint">{i + 1}</span>
-              {canEdit ? (
-                <input
-                  value={row.destination}
-                  onChange={(e) => updateRow(row.id, "destination", e.target.value)}
-                  onBlur={flushPendingSave}
-                  placeholder="G..."
-                  className={`min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1.5 font-mono text-xs hover:border-hairline focus:border-accent focus:outline-none ${
-                    isNew ? "text-ink" : r.addressValid ? "text-success" : "text-danger"
-                  }`}
-                />
-              ) : (
-                <span
-                  className={`min-w-0 flex-1 truncate px-2 py-1.5 font-mono text-xs ${
-                    r?.addressValid ? "text-success" : "text-danger"
-                  }`}
-                >
-                  {row.destination}
-                </span>
-              )}
-              {canEdit ? (
-                <input
-                  value={row.amount}
-                  onChange={(e) => updateRow(row.id, "amount", e.target.value)}
-                  onBlur={flushPendingSave}
-                  placeholder="0"
-                  inputMode="decimal"
-                  className="w-20 shrink-0 rounded border border-transparent bg-transparent px-2 py-1.5 tabular-nums text-ink hover:border-hairline focus:border-accent focus:outline-none"
-                />
-              ) : (
-                <span className="w-20 shrink-0 px-2 py-1.5 tabular-nums text-ink">{row.amount}</span>
-              )}
-              {r?.isDuplicate && (
-                <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
-                  dup
-                </span>
-              )}
-              {canEdit && (
-                <button
-                  onClick={() => removeRow(row.id)}
-                  title="Remove recipient"
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-danger-soft hover:text-danger"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {canEdit && (
-        <button onClick={addRow} className="mt-3 text-sm font-medium text-accent hover:underline">
-          + Add recipient
-        </button>
-      )}
+      <RecipientsEditor value={text} onChange={onTextChange} onBlur={flushPendingSave} readOnly={!canEdit} />
       <p className="mt-4 text-xs text-ink-faint">
         Addresses and account status are checked automatically as you edit — switch to Confirm once
         recipients look ready.

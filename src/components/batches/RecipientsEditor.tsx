@@ -27,10 +27,14 @@ export function RecipientsEditor({
   value,
   onChange,
   onFileNameChange,
+  onBlur,
+  readOnly,
 }: {
   value: string;
   onChange: (value: string) => void;
   onFileNameChange?: (name: string | null) => void;
+  onBlur?: () => void;
+  readOnly?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
@@ -61,36 +65,38 @@ export function RecipientsEditor({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <label className="text-sm font-medium text-ink">Addresses with amounts</label>
-        <div className="flex items-center gap-4 text-xs">
-          <button
-            type="button"
-            onClick={() => {
-              onChange(EXAMPLE_ROWS);
-              onFileNameChange?.(null);
-            }}
-            className="text-accent hover:underline"
-          >
-            Show example
-          </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-accent hover:underline"
-          >
-            Upload CSV
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFilePicked(file);
-              e.target.value = "";
-            }}
-          />
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-4 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                onChange(EXAMPLE_ROWS);
+                onFileNameChange?.(null);
+              }}
+              className="text-accent hover:underline"
+            >
+              Show example
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="text-accent hover:underline"
+            >
+              Upload CSV
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFilePicked(file);
+                e.target.value = "";
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex overflow-hidden rounded-md border border-hairline bg-paper focus-within:border-accent">
@@ -108,8 +114,10 @@ export function RecipientsEditor({
             onChange(e.target.value);
             onFileNameChange?.(null);
           }}
+          onBlur={onBlur}
           onScroll={syncGutterScroll}
           spellCheck={false}
+          readOnly={readOnly}
           rows={8}
           placeholder={"GDM5TP...CGOC5,10\nGBRPYH...7OX2H,5.5,optional memo"}
           className="min-w-0 flex-1 resize-y bg-transparent px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint focus:outline-none"
