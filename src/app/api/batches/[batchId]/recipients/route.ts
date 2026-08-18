@@ -79,13 +79,18 @@ export async function PUT(
       for (let i = 0; i < parsed.data.rows.length; i++) {
         const input = parsed.data.rows[i];
         const v = validated[i];
-        // `amount` is a required Decimal column — an empty or non-numeric
-        // draft (still being typed, or just garbage) can't be stored
-        // as-is. The row is already flagged VALIDATION_FAILED in that
-        // case, so the actual value here is a placeholder pending a fix.
-        const amount = v.amountValid ? v.amount : "0";
-        const memo = v.memo ?? null;
         const existing = input.id ? existingById.get(input.id) : undefined;
+        // `amount` is a required Decimal column — an empty or non-numeric
+        // draft (still being typed, or just garbage) can't be stored as-is.
+        // For a row that already had a valid amount, keep that instead of
+        // stomping it with a placeholder: a debounced save landing on a
+        // transient mid-edit state (e.g. "5." while retyping "5.5" into
+        // "5.6") would otherwise persist as "0" and — since the client
+        // mirrors whatever's saved — visibly overwrite what the user was
+        // still typing. Only a genuinely new row with no prior value falls
+        // back to "0".
+        const amount = v.amountValid ? v.amount : (existing ? existing.amount.toString() : "0");
+        const memo = v.memo ?? null;
         // Only a row whose actual address/amount/memo changed needs its
         // balance/trustline checks invalidated — resetting every row on
         // every save meant editing one recipient silently re-checked the

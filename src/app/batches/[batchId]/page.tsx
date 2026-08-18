@@ -182,6 +182,15 @@ export default function BatchReviewPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRowsRef = useRef<EditableRow[]>([]);
   const autoCheckingRef = useRef(false);
+  // Mirrors editedRows so an async save's success handler can tell whether
+  // the user has typed something newer since that save was kicked off —
+  // read via ref (not state) because the handler runs later, after
+  // whatever render captured its closure is long gone.
+  const editedRowsRef = useRef<EditableRow[] | null>(null);
+  const applyEditedRows = useCallback((next: EditableRow[] | null) => {
+    editedRowsRef.current = next;
+    setEditedRows(next);
+  }, []);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/batches/${batchId}`);
@@ -312,7 +321,15 @@ export default function BatchReviewPage() {
             if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
             const { batch: updated } = await res.json();
             setBatch(updated);
-            setEditedRows(null);
+            // Only drop the local draft if it's still exactly what this
+            // save persisted — if the user typed something newer while
+            // this request was in flight, editedRowsRef now points at a
+            // different array, and clearing here would snap their input
+            // back to this (possibly stale, e.g. "0" for a
+            // transiently-invalid amount) server response mid-keystroke.
+            if (editedRowsRef.current === current) {
+              applyEditedRows(null);
+            }
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to save recipients");
           } finally {
@@ -324,7 +341,7 @@ export default function BatchReviewPage() {
       }
       savingInFlightRef.current = false;
     },
-    [batchId]
+    [batchId, applyEditedRows]
   );
 
   const scheduleSave = useCallback(
@@ -370,7 +387,7 @@ export default function BatchReviewPage() {
       const next = exists
         ? confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r))
         : [...confirmRows, { id, destination: "", amount: DEFAULT_AMOUNT, memo: null, [field]: value }];
-      setEditedRows(next);
+      applyEditedRows(next);
       // Prepare's textarea caches its own raw text so it never reformats
       // mid-typing (see prepareText) — but that means it won't pick up a
       // change made here on its own. Drop the cache so switching to
@@ -379,30 +396,30 @@ export default function BatchReviewPage() {
       setPrepareText(null);
       scheduleSave(next);
     },
-    [confirmRows, scheduleSave]
+    [confirmRows, scheduleSave, applyEditedRows]
   );
 
   const removeRow = useCallback(
     (id: string) => {
       const next = confirmRows.filter((r) => r.id !== id);
-      setEditedRows(next);
+      applyEditedRows(next);
       setPrepareText(null);
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       persistRows(next);
     },
-    [confirmRows, persistRows]
+    [confirmRows, persistRows, applyEditedRows]
   );
 
   const applyAmountToAll = useCallback(
     (amount: string) => {
       if (!amount.trim() || confirmRows.length === 0) return;
       const next = confirmRows.map((r) => ({ ...r, amount: amount.trim() }));
-      setEditedRows(next);
+      applyEditedRows(next);
       setPrepareText(null);
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       persistRows(next);
     },
-    [confirmRows, persistRows]
+    [confirmRows, persistRows, applyEditedRows]
   );
 
   const patchNetworkAsset = useCallback(
