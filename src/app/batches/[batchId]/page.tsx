@@ -85,6 +85,7 @@ function recipientToRow(r: Recipient): EditableRow {
 }
 
 function rowToLine(r: EditableRow): string {
+  if (!r.destination && !r.amount && !r.memo) return "";
   const parts = [r.destination, r.amount];
   if (r.memo) parts.push(r.memo);
   return parts.join(",");
@@ -276,7 +277,6 @@ export default function BatchReviewPage() {
         const { batch: updated } = await res.json();
         setBatch(updated);
         setEditedRows(null);
-        setPinnedStage(null);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to save recipients");
       } finally {
@@ -329,7 +329,6 @@ export default function BatchReviewPage() {
         if (!res.ok) throw new Error((await res.json()).error ?? "Failed to update network/asset");
         const { batch: updated } = await res.json();
         setBatch(updated);
-        setPinnedStage(null);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to update network/asset");
       } finally {
