@@ -55,6 +55,7 @@ export async function PUT(
   }
 
   const existingIds = new Set(batch.recipients.map((r) => r.id));
+  const existingById = new Map(batch.recipients.map((r) => [r.id, r]));
   const validated = validateRecipients(
     parsed.data.rows.map((r, i) => ({
       rowIndex: i + 1,
@@ -78,33 +79,61 @@ export async function PUT(
       for (let i = 0; i < parsed.data.rows.length; i++) {
         const input = parsed.data.rows[i];
         const v = validated[i];
+        // `amount` is a required Decimal column — an empty or non-numeric
+        // draft (still being typed, or just garbage) can't be stored
+        // as-is. The row is already flagged VALIDATION_FAILED in that
+        // case, so the actual value here is a placeholder pending a fix.
+        const amount = v.amountValid ? v.amount : "0";
+        const memo = v.memo ?? null;
+        const existing = input.id ? existingById.get(input.id) : undefined;
+        // Only a row whose actual address/amount/memo changed needs its
+        // balance/trustline checks invalidated — resetting every row on
+        // every save meant editing one recipient silently re-checked the
+        // whole batch instead of just what changed.
+        const contentChanged =
+          !existing ||
+          existing.destination !== v.destination ||
+          Number(existing.amount.toString()) !== Number(amount) ||
+          (existing.memo ?? null) !== memo;
+
         const data = {
           rowIndex: i + 1,
           destination: v.destination,
-          // `amount` is a required Decimal column — an empty or non-numeric
-          // draft (still being typed, or just garbage) can't be stored
-          // as-is. The row is already flagged VALIDATION_FAILED in that
-          // case, so the actual value here is a placeholder pending a fix.
-          amount: v.amountValid ? v.amount : "0",
+          amount,
           // Prisma treats `undefined` in update data as "leave unchanged",
           // not "clear it" — explicit null is required to actually clear a
           // stale memo/errorMessage from a previous revision of this row.
-          memo: v.memo ?? null,
+          memo,
           addressValid: v.addressValid,
           isDuplicate: v.isDuplicate,
-          status: v.addressValid && v.amountValid ? ("PENDING" as const) : ("VALIDATION_FAILED" as const),
-          errorMessage: v.errorMessage ?? null,
-          // Stale after any edit — re-checked separately.
-          accountExists: null,
-          currentBalance: null,
-          hasTrustline: null,
-          trustlineLimitOk: null,
+          ...(contentChanged
+            ? {
+                status: v.addressValid && v.amountValid ? ("PENDING" as const) : ("VALIDATION_FAILED" as const),
+                errorMessage: v.errorMessage ?? null,
+                // Stale after a real content change — re-checked separately.
+                accountExists: null,
+                currentBalance: null,
+                hasTrustline: null,
+                trustlineLimitOk: null,
+              }
+            : {}),
         };
 
-        if (input.id && existingIds.has(input.id)) {
-          await tx.recipient.update({ where: { id: input.id }, data });
+        if (existing) {
+          await tx.recipient.update({ where: { id: existing.id }, data });
         } else {
-          await tx.recipient.create({ data: { ...data, batchId: batch.id } });
+          await tx.recipient.create({
+            data: {
+              ...data,
+              batchId: batch.id,
+              status: v.addressValid && v.amountValid ? "PENDING" : "VALIDATION_FAILED",
+              errorMessage: v.errorMessage ?? null,
+              accountExists: null,
+              currentBalance: null,
+              hasTrustline: null,
+              trustlineLimitOk: null,
+            },
+          });
         }
       }
 
