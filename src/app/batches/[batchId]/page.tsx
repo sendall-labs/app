@@ -321,14 +321,27 @@ export default function BatchReviewPage() {
             if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
             const { batch: updated } = await res.json();
             setBatch(updated);
-            // Only drop the local draft if it's still exactly what this
-            // save persisted — if the user typed something newer while
-            // this request was in flight, editedRowsRef now points at a
-            // different array, and clearing here would snap their input
-            // back to this (possibly stale, e.g. "0" for a
-            // transiently-invalid amount) server response mid-keystroke.
+            // Never resync destination/amount text from the response —
+            // Confirm's status/balance/etc. columns already read live from
+            // `batch` on every render regardless of editedRows, so the
+            // only thing a freshly-created row still needs from this
+            // response is its real id (so the *next* edit updates it
+            // instead of creating a duplicate). Patch that in by position
+            // and leave everything the user typed untouched — including a
+            // save that landed on a momentarily-invalid value, which must
+            // not visibly "correct itself" out from under a still-focused
+            // field. Skipped entirely if a newer edit has since replaced
+            // `current` (editedRowsRef would point elsewhere by now).
             if (editedRowsRef.current === current) {
-              applyEditedRows(null);
+              const idByOldRow = new Map<EditableRow, string>();
+              nonEmpty.forEach((r, i) => {
+                if (r.id.startsWith("new-") && updated.recipients[i]) {
+                  idByOldRow.set(r, updated.recipients[i].id);
+                }
+              });
+              if (idByOldRow.size > 0) {
+                applyEditedRows(current.map((r) => (idByOldRow.has(r) ? { ...r, id: idByOldRow.get(r)! } : r)));
+              }
             }
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to save recipients");
