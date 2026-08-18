@@ -32,44 +32,51 @@ export async function POST(
   });
   if (!attempt) return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
 
-  const result = await submitAndPoll(batch.network as Network, parsed.data.signedXdr);
+  try {
+    const result = await submitAndPoll(batch.network as Network, parsed.data.signedXdr);
 
-  const attemptStatus = result.status === "SUCCESS" ? "SUCCESS" : "FAILED";
-  await prisma.paymentAttempt.update({
-    where: { id: attempt.id },
-    data: {
-      status: attemptStatus,
-      txHash: result.hash,
-      resultXdr: result.resultXdr,
-      submittedAt: new Date(),
-    },
-  });
+    const attemptStatus = result.status === "SUCCESS" ? "SUCCESS" : "FAILED";
+    await prisma.paymentAttempt.update({
+      where: { id: attempt.id },
+      data: {
+        status: attemptStatus,
+        txHash: result.hash,
+        resultXdr: result.resultXdr,
+        submittedAt: new Date(),
+      },
+    });
 
-  const opResultByIndex = new Map(result.perOperation.map((r) => [r.operationIndex, r]));
+    const opResultByIndex = new Map(result.perOperation.map((r) => [r.operationIndex, r]));
 
-  await prisma.$transaction(
-    attempt.items.flatMap((item) => {
-      const opResult = opResultByIndex.get(item.operationIndex);
-      const success = opResult?.success ?? false;
-      const itemStatus = success ? "SUCCESS" : "FAILED";
-      return [
-        prisma.paymentAttemptItem.update({
-          where: { id: item.id },
-          data: { status: itemStatus, resultCode: opResult?.code },
-        }),
-        prisma.recipient.update({
-          where: { id: item.recipientId },
-          data: { status: success ? "SUCCESS" : "FAILED", errorMessage: success ? null : opResult?.code },
-        }),
-      ];
-    })
-  );
+    await prisma.$transaction(
+      attempt.items.flatMap((item) => {
+        const opResult = opResultByIndex.get(item.operationIndex);
+        const success = opResult?.success ?? false;
+        const itemStatus = success ? "SUCCESS" : "FAILED";
+        return [
+          prisma.paymentAttemptItem.update({
+            where: { id: item.id },
+            data: { status: itemStatus, resultCode: opResult?.code },
+          }),
+          prisma.recipient.update({
+            where: { id: item.recipientId },
+            data: { status: success ? "SUCCESS" : "FAILED", errorMessage: success ? null : opResult?.code },
+          }),
+        ];
+      })
+    );
 
-  const recipients = await prisma.recipient.findMany({ where: { batchId: batch.id } });
-  const hasFailed = recipients.some((r) => r.status === "FAILED");
-  const allTerminal = recipients.every((r) => r.status === "SUCCESS" || r.status === "FAILED" || r.status === "VALIDATION_FAILED" || r.status === "CHECK_FAILED");
-  const batchStatus = !allTerminal ? "SUBMITTING" : hasFailed ? "PARTIAL_FAILURE" : "COMPLETED";
-  await prisma.batch.update({ where: { id: batch.id }, data: { status: batchStatus } });
+    const recipients = await prisma.recipient.findMany({ where: { batchId: batch.id } });
+    const hasFailed = recipients.some((r) => r.status === "FAILED");
+    const allTerminal = recipients.every((r) => r.status === "SUCCESS" || r.status === "FAILED" || r.status === "VALIDATION_FAILED" || r.status === "CHECK_FAILED");
+    const batchStatus = !allTerminal ? "SUBMITTING" : hasFailed ? "PARTIAL_FAILURE" : "COMPLETED";
+    await prisma.batch.update({ where: { id: batch.id }, data: { status: batchStatus } });
 
-  return NextResponse.json({ result });
+    return NextResponse.json({ result });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Submit failed" },
+      { status: 500 }
+    );
+  }
 }

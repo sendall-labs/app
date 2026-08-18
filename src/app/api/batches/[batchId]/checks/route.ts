@@ -26,38 +26,48 @@ export async function POST(
     return NextResponse.json({ checked: 0 });
   }
 
+  const previousStatus = batch.status;
   await prisma.batch.update({ where: { id: batch.id }, data: { status: "CHECKING" } });
 
   const asset = batch.assetCode && batch.assetIssuer ? new Asset(batch.assetCode, batch.assetIssuer) : null;
-  const results = await checkRecipients(
-    batch.network as Network,
-    candidates.map((r) => ({ destination: r.destination, amount: r.amount.toString() })),
-    asset
-  );
 
-  await prisma.$transaction(
-    candidates.map((r) => {
-      const result = results.get(r.destination);
-      const ok = result?.ok ?? false;
-      return prisma.recipient.update({
-        where: { id: r.id },
-        data: {
-          accountExists: result?.accountExists ?? false,
-          hasTrustline: result?.hasTrustline ?? null,
-          trustlineLimitOk: result?.trustlineLimitOk ?? null,
-          status: ok ? "READY" : "CHECK_FAILED",
-          errorMessage: ok ? null : result?.reason,
-        },
-      });
-    })
-  );
+  try {
+    const results = await checkRecipients(
+      batch.network as Network,
+      candidates.map((r) => ({ destination: r.destination, amount: r.amount.toString() })),
+      asset
+    );
 
-  const finalRecipients = await prisma.recipient.findMany({ where: { batchId: batch.id } });
-  const anyReady = finalRecipients.some((r) => r.status === "READY");
-  await prisma.batch.update({
-    where: { id: batch.id },
-    data: { status: anyReady ? "READY" : "FAILED" },
-  });
+    await prisma.$transaction(
+      candidates.map((r) => {
+        const result = results.get(r.destination);
+        const ok = result?.ok ?? false;
+        return prisma.recipient.update({
+          where: { id: r.id },
+          data: {
+            accountExists: result?.accountExists ?? false,
+            hasTrustline: result?.hasTrustline ?? null,
+            trustlineLimitOk: result?.trustlineLimitOk ?? null,
+            status: ok ? "READY" : "CHECK_FAILED",
+            errorMessage: ok ? null : result?.reason,
+          },
+        });
+      })
+    );
 
-  return NextResponse.json({ checked: candidates.length });
+    const finalRecipients = await prisma.recipient.findMany({ where: { batchId: batch.id } });
+    const anyReady = finalRecipients.some((r) => r.status === "READY");
+    await prisma.batch.update({
+      where: { id: batch.id },
+      data: { status: anyReady ? "READY" : "FAILED" },
+    });
+
+    return NextResponse.json({ checked: candidates.length });
+  } catch (err) {
+    await prisma.batch.update({ where: { id: batch.id }, data: { status: previousStatus } });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Check failed" },
+      { status: 500 }
+    );
+  }
 }
