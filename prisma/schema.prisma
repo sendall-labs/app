@@ -1,4 +1,4 @@
-// MultiSend data model — classic Stellar bulk payments (no Soroban).
+// Sendall data model — classic Stellar bulk payments (no Soroban).
 // See /Users/caner/.claude/plans/instawards-statement-of-work-sow-goofy-hopcroft.md
 
 generator client {
@@ -43,6 +43,17 @@ enum AttemptStatus {
   SUBMITTED
   SUCCESS
   FAILED
+}
+
+model RefreshToken {
+  id             String    @id @default(cuid())
+  ownerPublicKey String
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  revokedAt      DateTime?
+
+  @@index([ownerPublicKey])
 }
 
 model Batch {

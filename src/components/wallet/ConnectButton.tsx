@@ -9,7 +9,7 @@ function truncate(address: string): string {
 }
 
 export function ConnectButton() {
-  const { network, address, connect, signTransaction } = useWallet();
+  const { address, connect, signMessage } = useWallet();
   const [session, setSession] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -28,17 +28,17 @@ export function ConnectButton() {
       const challengeRes = await fetch("/api/auth/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ publicKey, network }),
+        body: JSON.stringify({ publicKey }),
       });
       if (!challengeRes.ok) throw new Error("Could not build login challenge");
-      const { challenge } = await challengeRes.json();
+      const { message, token } = await challengeRes.json();
 
-      const signedChallenge = await signTransaction(challenge);
+      const signedMessage = await signMessage(message);
 
       const verifyRes = await fetch("/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signedChallenge, network }),
+        body: JSON.stringify({ publicKey, signedMessage, token }),
       });
       if (!verifyRes.ok) {
         const { error } = await verifyRes.json();
@@ -52,7 +52,7 @@ export function ConnectButton() {
     } finally {
       setLoading(false);
     }
-  }, [address, connect, network, signTransaction]);
+  }, [address, connect, signMessage]);
 
   const handleLogout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST" });

@@ -1,40 +1,60 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
-import { buildLoginChallenge, verifyLoginChallenge } from "./siws";
+import { Keypair } from "@stellar/stellar-sdk";
+import { buildLoginMessage, verifyLoginMessage } from "./siws";
 
-describe("SEP-10 style SIWS challenge", () => {
-  const serverKeypair = Keypair.random();
+describe("SEP-53 login message", () => {
   const clientKeypair = Keypair.random();
 
   beforeAll(() => {
-    process.env.SEP10_SERVER_SECRET = serverKeypair.secret();
-    process.env.NEXT_PUBLIC_HOME_DOMAIN = "multisend.test";
+    process.env.SESSION_SECRET = "test-session-secret";
+    process.env.NEXT_PUBLIC_HOME_DOMAIN = "sendall.test";
   });
 
-  it("round-trips: build -> client signs -> verify returns client public key", () => {
-    const challenge = buildLoginChallenge(clientKeypair.publicKey(), "TESTNET");
+  it("round-trips: build -> client signs -> verify returns client public key", async () => {
+    const { message, token } = await buildLoginMessage(clientKeypair.publicKey());
 
-    const tx = TransactionBuilder.fromXDR(challenge, "Test SDF Network ; September 2015");
-    tx.sign(clientKeypair);
-    const signed = tx.toEnvelope().toXDR("base64");
+    const signedMessage = clientKeypair.signMessage(message).toString("base64");
 
-    const verifiedPublicKey = verifyLoginChallenge(signed, "TESTNET");
+    const verifiedPublicKey = await verifyLoginMessage({
+      publicKey: clientKeypair.publicKey(),
+      signedMessage,
+      token,
+    });
     expect(verifiedPublicKey).toBe(clientKeypair.publicKey());
   });
 
-  it("rejects a challenge signed by the wrong key", () => {
+  it("rejects a message signed by the wrong key", async () => {
     const wrongKeypair = Keypair.random();
-    const challenge = buildLoginChallenge(clientKeypair.publicKey(), "TESTNET");
+    const { message, token } = await buildLoginMessage(clientKeypair.publicKey());
 
-    const tx = TransactionBuilder.fromXDR(challenge, "Test SDF Network ; September 2015");
-    tx.sign(wrongKeypair);
-    const signed = tx.toEnvelope().toXDR("base64");
+    const signedMessage = wrongKeypair.signMessage(message).toString("base64");
 
-    expect(() => verifyLoginChallenge(signed, "TESTNET")).toThrow();
+    await expect(
+      verifyLoginMessage({ publicKey: clientKeypair.publicKey(), signedMessage, token })
+    ).rejects.toThrow();
   });
 
-  it("rejects an unsigned challenge", () => {
-    const challenge = buildLoginChallenge(clientKeypair.publicKey(), "TESTNET");
-    expect(() => verifyLoginChallenge(challenge, "TESTNET")).toThrow();
+  it("rejects a token issued for a different public key", async () => {
+    const otherKeypair = Keypair.random();
+    const { message, token } = await buildLoginMessage(otherKeypair.publicKey());
+
+    const signedMessage = clientKeypair.signMessage(message).toString("base64");
+
+    await expect(
+      verifyLoginMessage({ publicKey: clientKeypair.publicKey(), signedMessage, token })
+    ).rejects.toThrow();
+  });
+
+  it("rejects a tampered token", async () => {
+    const { message } = await buildLoginMessage(clientKeypair.publicKey());
+    const signedMessage = clientKeypair.signMessage(message).toString("base64");
+
+    await expect(
+      verifyLoginMessage({
+        publicKey: clientKeypair.publicKey(),
+        signedMessage,
+        token: "not-a-real-token",
+      })
+    ).rejects.toThrow();
   });
 });

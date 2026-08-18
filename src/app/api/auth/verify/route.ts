@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { verifyLoginChallenge } from "@/lib/stellar/siws";
+import { StrKey } from "@stellar/stellar-sdk";
+import { verifyLoginMessage } from "@/lib/stellar/siws";
 import { signSession, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
-import type { Network } from "@/generated/prisma/enums";
+import { issueRefreshToken, REFRESH_COOKIE, REFRESH_TTL_SECONDS } from "@/lib/auth/refreshToken";
 
 const bodySchema = z.object({
-  signedChallenge: z.string(),
-  network: z.enum(["TESTNET", "PUBLIC"]),
+  publicKey: z.string().refine(
+    (v) => StrKey.isValidEd25519PublicKey(v) || StrKey.isValidMed25519PublicKey(v),
+    "Invalid Stellar public key"
+  ),
+  signedMessage: z.string(),
+  token: z.string(),
 });
 
 export async function POST(request: Request) {
@@ -18,7 +23,7 @@ export async function POST(request: Request) {
 
   let publicKey: string;
   try {
-    publicKey = verifyLoginChallenge(parsed.data.signedChallenge, parsed.data.network as Network);
+    publicKey = await verifyLoginMessage(parsed.data);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Challenge verification failed" },
@@ -26,14 +31,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const token = await signSession({ sub: publicKey });
+  const sessionToken = await signSession({ sub: publicKey });
+  const refreshToken = await issueRefreshToken(publicKey);
+
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
+  const secure = process.env.NODE_ENV === "production";
+  cookieStore.set(SESSION_COOKIE, sessionToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
+  });
+  cookieStore.set(REFRESH_COOKIE, refreshToken.raw, {
+    httpOnly: true,
+    secure,
+    sameSite: "lax",
+    path: "/api/auth",
+    maxAge: REFRESH_TTL_SECONDS,
   });
 
   return NextResponse.json({ publicKey });

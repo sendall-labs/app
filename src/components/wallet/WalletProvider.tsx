@@ -12,6 +12,7 @@ type WalletContextValue = {
   connect: () => Promise<string>;
   disconnect: () => Promise<void>;
   signTransaction: (xdr: string) => Promise<string>;
+  signMessage: (message: string) => Promise<string>;
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -65,9 +66,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [address, network]
   );
 
+  const signMessage = useCallback(
+    async (message: string) => {
+      if (!address) throw new Error("No wallet connected");
+      const { signedMessage } = await StellarWalletsKit.signMessage(message, {
+        address,
+        networkPassphrase: networkToKitNetwork(network),
+      });
+      return signedMessage;
+    },
+    [address, network]
+  );
+
   const value = useMemo(
-    () => ({ network, setNetwork, address, connecting, connect, disconnect, signTransaction }),
-    [network, address, connecting, connect, disconnect, signTransaction]
+    () => ({
+      network,
+      setNetwork,
+      address,
+      connecting,
+      connect,
+      disconnect,
+      signTransaction,
+      signMessage,
+    }),
+    [network, address, connecting, connect, disconnect, signTransaction, signMessage]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

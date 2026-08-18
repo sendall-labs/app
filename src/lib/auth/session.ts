@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 
-const SESSION_COOKIE = "multisend_session";
-const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12h
+const SESSION_COOKIE = "sendall_session";
+const SESSION_TTL_SECONDS = 60 * 60 * 24; // 1 day — short-lived; refresh token silently renews it
 
 function getSecret(): Uint8Array {
   const secret = process.env.SESSION_SECRET;
