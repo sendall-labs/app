@@ -95,19 +95,35 @@ function rowsToText(rows: EditableRow[]): string {
   return rows.map(rowToLine).join("\n");
 }
 
+const DEFAULT_AMOUNT = "1";
+
 /** Parses "destination,amount,memo" lines back into rows, preserving each
  * existing row's id by position so unedited/edited-in-place rows don't get
- * needlessly deleted and recreated server-side. */
+ * needlessly deleted and recreated server-side. A destination with no
+ * amount yet (still typing, comma not reached) defaults to 1 instead of
+ * flashing invalid the moment the address is finished. */
 function textToRows(text: string, prevRows: EditableRow[]): EditableRow[] {
   return text.split(/\r?\n/).map((line, i) => {
     const [rawDestination = "", rawAmount = "", ...rest] = line.split(",");
+    const destination = rawDestination.trim();
     return {
       id: prevRows[i]?.id ?? `new-${Date.now()}-${i}`,
-      destination: rawDestination.trim(),
-      amount: rawAmount.trim(),
+      destination,
+      amount: rawAmount.trim() || (destination ? DEFAULT_AMOUNT : ""),
       memo: rest.length > 0 ? rest.join(",").trim() || null : null,
     };
   });
+}
+
+function sumAmounts(rows: EditableRow[]): number {
+  return rows.reduce((sum, r) => {
+    const n = Number(r.amount);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
+function formatAmount(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 7 });
 }
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
@@ -161,6 +177,7 @@ export default function BatchReviewPage() {
   // reformatting issue a single free-text field is.
   const [editedRows, setEditedRows] = useState<EditableRow[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [bulkAmount, setBulkAmount] = useState("");
   const [pinnedStage, setPinnedStage] = useState<Stage | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRowsRef = useRef<EditableRow[]>([]);
@@ -352,7 +369,7 @@ export default function BatchReviewPage() {
       const exists = confirmRows.some((r) => r.id === id);
       const next = exists
         ? confirmRows.map((r) => (r.id === id ? { ...r, [field]: value } : r))
-        : [...confirmRows, { id, destination: "", amount: "", memo: null, [field]: value }];
+        : [...confirmRows, { id, destination: "", amount: DEFAULT_AMOUNT, memo: null, [field]: value }];
       setEditedRows(next);
       scheduleSave(next);
     },
@@ -362,6 +379,17 @@ export default function BatchReviewPage() {
   const removeRow = useCallback(
     (id: string) => {
       const next = confirmRows.filter((r) => r.id !== id);
+      setEditedRows(next);
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      persistRows(next);
+    },
+    [confirmRows, persistRows]
+  );
+
+  const applyAmountToAll = useCallback(
+    (amount: string) => {
+      if (!amount.trim() || confirmRows.length === 0) return;
+      const next = confirmRows.map((r) => ({ ...r, amount: amount.trim() }));
       setEditedRows(next);
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       persistRows(next);
@@ -491,6 +519,7 @@ export default function BatchReviewPage() {
   const prepareDisplayText = prepareText ?? rowsToText(savedRows);
   const draftRows = prepareText !== null ? textToRows(prepareText, savedRows) : savedRows;
   const recipientCount = draftRows.filter((r) => r.destination.trim() || r.amount.trim()).length;
+  const totalAmount = sumAmounts(draftRows);
   const recipientById = new Map(batch.recipients.map((r) => [r.id, r]));
   const stageIndex = STAGES.findIndex((s) => s.key === displayedStage);
   // A blank row always trails the list so typing straight into it is how
@@ -513,7 +542,7 @@ export default function BatchReviewPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
         {canEdit ? (
           <NetworkField
             network={batch.network}
@@ -536,6 +565,10 @@ export default function BatchReviewPage() {
         )}
         <InfoField label="Recipients" value={String(recipientCount)} />
         <InfoField
+          label="Total to send"
+          value={`${formatAmount(totalAmount)} ${batch.assetCode ?? "XLM"}`}
+        />
+        <InfoField
           label="Status"
           value={
             <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(batch.status)}`}>
@@ -556,25 +589,47 @@ export default function BatchReviewPage() {
 
       {displayedStage === "confirm" && (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap justify-end gap-2">
-            {refreshableCount > 0 && (
-              <button
-                onClick={refreshAll}
-                disabled={anyBusy}
-                className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
-              </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {canEdit && confirmRows.length > 0 ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={bulkAmount}
+                  onChange={(e) => setBulkAmount(e.target.value)}
+                  placeholder="Amount for all"
+                  inputMode="decimal"
+                  className="w-36 rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+                />
+                <button
+                  onClick={() => applyAmountToAll(bulkAmount)}
+                  disabled={!bulkAmount.trim()}
+                  className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Set for all
+                </button>
+              </div>
+            ) : (
+              <span />
             )}
-            {readyCount > 0 && (
-              <button
-                onClick={prepareAndSend}
-                disabled={anyBusy}
-                className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
-              </button>
-            )}
+            <div className="flex flex-wrap justify-end gap-2">
+              {refreshableCount > 0 && (
+                <button
+                  onClick={refreshAll}
+                  disabled={anyBusy}
+                  className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
+                </button>
+              )}
+              {readyCount > 0 && (
+                <button
+                  onClick={prepareAndSend}
+                  disabled={anyBusy}
+                  className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
+                </button>
+              )}
+            </div>
           </div>
           <EditableRecipientsTable
             rows={displayConfirmRows}
