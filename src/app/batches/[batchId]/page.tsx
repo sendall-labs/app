@@ -182,7 +182,13 @@ export default function BatchReviewPage() {
     fetch(`/api/batches/${batchId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!cancelled && data) setBatch(data.batch);
+        if (cancelled || !data) return;
+        setBatch(data.batch);
+        // Pin the view to wherever this batch actually stood on arrival —
+        // otherwise the background auto-check (VALIDATED -> READY, see
+        // below) flips the display to Confirm moments after the page
+        // opens, even though the user never left Prepare.
+        setPinnedStage(stageFromStatus(data.batch.status));
       });
     return () => {
       cancelled = true;
@@ -317,6 +323,32 @@ export default function BatchReviewPage() {
       scheduleSave(next);
     },
     [rows, scheduleSave]
+  );
+
+  const patchNetworkAsset = useCallback(
+    async (next: { network: string; assetCode: string; assetIssuer: string }) => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            network: next.network,
+            assetCode: next.assetCode || undefined,
+            assetIssuer: next.assetIssuer || undefined,
+          }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Failed to update network/asset");
+        const { batch: updated } = await res.json();
+        setBatch(updated);
+        setPinnedStage(null);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to update network/asset");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId]
   );
 
   const refreshOne = useCallback((id: string) => runChecks([id], "row"), [runChecks]);
@@ -477,6 +509,10 @@ export default function BatchReviewPage() {
           canEdit={canEdit}
           onTextChange={handlePrepareTextChange}
           flushPendingSave={flushPendingSave}
+          network={batch.network}
+          assetCode={batch.assetCode}
+          assetIssuer={batch.assetIssuer}
+          patchNetworkAsset={patchNetworkAsset}
         />
       )}
 
@@ -563,16 +599,27 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
+const fieldInputClass =
+  "rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-50";
+
 function PrepareSection({
   rows,
   canEdit,
   onTextChange,
   flushPendingSave,
+  network,
+  assetCode,
+  assetIssuer,
+  patchNetworkAsset,
 }: {
   rows: EditableRow[];
   canEdit: boolean;
   onTextChange: (text: string) => void;
   flushPendingSave: () => void;
+  network: string;
+  assetCode: string | null;
+  assetIssuer: string | null;
+  patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
   const text = useMemo(() => rowsToText(rows), [rows]);
   return (
@@ -582,6 +629,56 @@ function PrepareSection({
         Addresses and account status are checked automatically as you edit — switch to Confirm once
         recipients look ready.
       </p>
+
+      <div key={`${network}-${assetCode}-${assetIssuer}`}>
+        <div className="mt-6 flex flex-col gap-2">
+          <label className="text-sm font-medium text-ink">Network</label>
+          <select
+            value={network}
+            disabled={!canEdit}
+            onChange={(e) =>
+              patchNetworkAsset({ network: e.target.value, assetCode: assetCode ?? "", assetIssuer: assetIssuer ?? "" })
+            }
+            className={fieldInputClass}
+          >
+            <option value="TESTNET">Testnet</option>
+            <option value="PUBLIC">Public (Mainnet)</option>
+          </select>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-ink">Asset code (blank = XLM)</label>
+            <input
+              defaultValue={assetCode ?? ""}
+              disabled={!canEdit}
+              onBlur={(e) => {
+                const code = e.target.value.trim().toUpperCase();
+                if (code !== (assetCode ?? "")) {
+                  patchNetworkAsset({ network, assetCode: code, assetIssuer: assetIssuer ?? "" });
+                }
+              }}
+              placeholder="USDC"
+              className={fieldInputClass}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-ink">Asset issuer</label>
+            <input
+              defaultValue={assetIssuer ?? ""}
+              disabled={!canEdit}
+              onBlur={(e) => {
+                const issuer = e.target.value.trim();
+                if (issuer !== (assetIssuer ?? "")) {
+                  patchNetworkAsset({ network, assetCode: assetCode ?? "", assetIssuer: issuer });
+                }
+              }}
+              placeholder="G..."
+              className={fieldInputClass}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
