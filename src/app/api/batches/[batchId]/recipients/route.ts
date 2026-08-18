@@ -69,47 +69,58 @@ export async function PUT(
   );
   const idsToDelete = [...existingIds].filter((id) => !submittedIds.has(id));
 
-  const updatedBatch = await prisma.$transaction(async (tx) => {
-    if (idsToDelete.length > 0) {
-      await tx.recipient.deleteMany({ where: { id: { in: idsToDelete } } });
-    }
-
-    for (let i = 0; i < parsed.data.rows.length; i++) {
-      const input = parsed.data.rows[i];
-      const v = validated[i];
-      const data = {
-        rowIndex: i + 1,
-        destination: v.destination,
-        amount: v.amount,
-        // Prisma treats `undefined` in update data as "leave unchanged",
-        // not "clear it" — explicit null is required to actually clear a
-        // stale memo/errorMessage from a previous revision of this row.
-        memo: v.memo ?? null,
-        addressValid: v.addressValid,
-        isDuplicate: v.isDuplicate,
-        status: v.addressValid && v.amountValid ? ("PENDING" as const) : ("VALIDATION_FAILED" as const),
-        errorMessage: v.errorMessage ?? null,
-        // Stale after any edit — re-checked separately.
-        accountExists: null,
-        currentBalance: null,
-        hasTrustline: null,
-        trustlineLimitOk: null,
-      };
-
-      if (input.id && existingIds.has(input.id)) {
-        await tx.recipient.update({ where: { id: input.id }, data });
-      } else {
-        await tx.recipient.create({ data: { ...data, batchId: batch.id } });
+  try {
+    const updatedBatch = await prisma.$transaction(async (tx) => {
+      if (idsToDelete.length > 0) {
+        await tx.recipient.deleteMany({ where: { id: { in: idsToDelete } } });
       }
-    }
 
-    await tx.batch.update({ where: { id: batch.id }, data: { status: "VALIDATED" } });
+      for (let i = 0; i < parsed.data.rows.length; i++) {
+        const input = parsed.data.rows[i];
+        const v = validated[i];
+        const data = {
+          rowIndex: i + 1,
+          destination: v.destination,
+          amount: v.amount,
+          // Prisma treats `undefined` in update data as "leave unchanged",
+          // not "clear it" — explicit null is required to actually clear a
+          // stale memo/errorMessage from a previous revision of this row.
+          memo: v.memo ?? null,
+          addressValid: v.addressValid,
+          isDuplicate: v.isDuplicate,
+          status: v.addressValid && v.amountValid ? ("PENDING" as const) : ("VALIDATION_FAILED" as const),
+          errorMessage: v.errorMessage ?? null,
+          // Stale after any edit — re-checked separately.
+          accountExists: null,
+          currentBalance: null,
+          hasTrustline: null,
+          trustlineLimitOk: null,
+        };
 
-    return tx.batch.findUniqueOrThrow({
-      where: { id: batch.id },
-      include: { recipients: { orderBy: { rowIndex: "asc" } }, attempts: { include: { items: true } } },
+        if (input.id && existingIds.has(input.id)) {
+          await tx.recipient.update({ where: { id: input.id }, data });
+        } else {
+          await tx.recipient.create({ data: { ...data, batchId: batch.id } });
+        }
+      }
+
+      await tx.batch.update({ where: { id: batch.id }, data: { status: "VALIDATED" } });
+
+      return tx.batch.findUniqueOrThrow({
+        where: { id: batch.id },
+        include: { recipients: { orderBy: { rowIndex: "asc" } }, attempts: { include: { items: true } } },
+      });
     });
-  });
 
-  return NextResponse.json({ batch: updatedBatch });
+    return NextResponse.json({ batch: updatedBatch });
+  } catch (err) {
+    // A second overlapping PUT for the same batch (a debounced save racing
+    // a blur-triggered flush, say) can hit a row another in-flight
+    // transaction already touched — surface it as a clean error instead of
+    // an unhandled 500 with no body.
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to save recipients" },
+      { status: 409 }
+    );
+  }
 }

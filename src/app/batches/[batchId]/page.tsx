@@ -149,14 +149,16 @@ export default function BatchReviewPage() {
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
   const [busyRowIds, setBusyRowIds] = useState<Set<string>>(new Set());
-  // null = mirror the server copy (recomputed below); non-null = unsaved
-  // local edits, autosaved on a short debounce. Kept this way (instead of
-  // syncing via an effect) so a background poll updating `batch` never
-  // clobbers what the user is mid-typing.
-  const [editedRows, setEditedRows] = useState<EditableRow[] | null>(null);
+  // null = mirror the server copy (recomputed below); non-null = the exact
+  // raw text the user is typing. Kept as raw text (instead of round-tripping
+  // through parsed rows on every keystroke) so the textarea never
+  // reformats — and inserts characters like a trailing "," — out from under
+  // the user's cursor.
+  const [prepareText, setPrepareText] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pinnedStage, setPinnedStage] = useState<Stage | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRowsRef = useRef<EditableRow[]>([]);
   const autoCheckingRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -195,10 +197,6 @@ export default function BatchReviewPage() {
 
   const canEdit = batch ? batch.attempts.length === 0 : false;
   const anyBusy = bulkBusy !== null || busyRowIds.size > 0;
-  const rows: EditableRow[] = useMemo(
-    () => editedRows ?? (batch ? batch.recipients.map(recipientToRow) : []),
-    [editedRows, batch]
-  );
 
   const runChecks = useCallback(
     async (recipientIds: string[] | undefined, mode: "row" | "bulk") => {
@@ -254,40 +252,61 @@ export default function BatchReviewPage() {
     return () => clearTimeout(timer);
   }, [batch, runChecks]);
 
+  // Guards against two overlapping PUTs racing the same batch's recipient
+  // set (e.g. the debounce firing right as a blur-triggered flush also
+  // fires) — the server transaction isn't safe against that, so a second
+  // call while one's in flight is queued to run after, with whatever rows
+  // are current at that time, instead of firing concurrently.
+  const savingInFlightRef = useRef(false);
+  const queuedRowsRef = useRef<EditableRow[] | null>(null);
+
   const persistRows = useCallback(
     async (rowsToSave: EditableRow[]) => {
-      const nonEmpty = rowsToSave.filter((r) => r.destination.trim() || r.amount.trim());
-      if (nonEmpty.length === 0) return;
-
-      setSaving(true);
-      try {
-        const res = await fetch(`/api/batches/${batchId}/recipients`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            rows: nonEmpty.map((r) => ({
-              id: r.id.startsWith("new-") ? undefined : r.id,
-              destination: r.destination.trim(),
-              amount: r.amount.trim(),
-              memo: r.memo || undefined,
-            })),
-          }),
-        });
-        if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
-        const { batch: updated } = await res.json();
-        setBatch(updated);
-        setEditedRows(null);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to save recipients");
-      } finally {
-        setSaving(false);
+      if (savingInFlightRef.current) {
+        queuedRowsRef.current = rowsToSave;
+        return;
       }
+      savingInFlightRef.current = true;
+      // Loop instead of recursing so a save queued while this one was in
+      // flight runs right after, without ever overlapping with it.
+      let current: EditableRow[] | null = rowsToSave;
+      while (current) {
+        const nonEmpty = current.filter((r) => r.destination.trim() || r.amount.trim());
+        if (nonEmpty.length > 0) {
+          setSaving(true);
+          try {
+            const res = await fetch(`/api/batches/${batchId}/recipients`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                rows: nonEmpty.map((r) => ({
+                  id: r.id.startsWith("new-") ? undefined : r.id,
+                  destination: r.destination.trim(),
+                  amount: r.amount.trim(),
+                  memo: r.memo || undefined,
+                })),
+              }),
+            });
+            if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save recipients");
+            const { batch: updated } = await res.json();
+            setBatch(updated);
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to save recipients");
+          } finally {
+            setSaving(false);
+          }
+        }
+        current = queuedRowsRef.current;
+        queuedRowsRef.current = null;
+      }
+      savingInFlightRef.current = false;
     },
     [batchId]
   );
 
   const scheduleSave = useCallback(
     (next: EditableRow[]) => {
+      pendingRowsRef.current = next;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         saveTimerRef.current = null;
@@ -301,16 +320,16 @@ export default function BatchReviewPage() {
     if (!saveTimerRef.current) return;
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = null;
-    persistRows(rows);
-  }, [persistRows, rows]);
+    persistRows(pendingRowsRef.current);
+  }, [persistRows]);
 
   const handlePrepareTextChange = useCallback(
     (text: string) => {
-      const next = textToRows(text, rows);
-      setEditedRows(next);
+      setPrepareText(text);
+      const next = textToRows(text, batch ? batch.recipients.map(recipientToRow) : []);
       scheduleSave(next);
     },
-    [rows, scheduleSave]
+    [batch, scheduleSave]
   );
 
   const patchNetworkAsset = useCallback(
@@ -430,7 +449,11 @@ export default function BatchReviewPage() {
       if (item.status === "SUCCESS") txHashByRecipient.set(item.recipientId, attempt.txHash);
     }
   }
-  const recipientById = new Map(batch.recipients.map((r) => [r.id, r]));
+
+  const savedRows = batch.recipients.map(recipientToRow);
+  const prepareDisplayText = prepareText ?? rowsToText(savedRows);
+  const draftRows = prepareText !== null ? textToRows(prepareText, savedRows) : savedRows;
+  const recipientCount = draftRows.filter((r) => r.destination.trim() || r.amount.trim()).length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -445,9 +468,27 @@ export default function BatchReviewPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <InfoField label="Network" value={batch.network} />
-        <InfoField label="Asset" value={batch.assetCode ?? "XLM"} />
-        <InfoField label="Recipients" value={String(batch.recipients.length)} />
+        {canEdit ? (
+          <NetworkField
+            network={batch.network}
+            assetCode={batch.assetCode}
+            assetIssuer={batch.assetIssuer}
+            patchNetworkAsset={patchNetworkAsset}
+          />
+        ) : (
+          <InfoField label="Network" value={batch.network} />
+        )}
+        {canEdit ? (
+          <AssetField
+            network={batch.network}
+            assetCode={batch.assetCode}
+            assetIssuer={batch.assetIssuer}
+            patchNetworkAsset={patchNetworkAsset}
+          />
+        ) : (
+          <InfoField label="Asset" value={batch.assetCode ?? "XLM"} />
+        )}
+        <InfoField label="Recipients" value={String(recipientCount)} />
         <InfoField
           label="Status"
           value={
@@ -460,14 +501,10 @@ export default function BatchReviewPage() {
 
       {displayedStage === "prepare" && (
         <PrepareSection
-          rows={rows}
+          text={prepareDisplayText}
           canEdit={canEdit}
           onTextChange={handlePrepareTextChange}
           flushPendingSave={flushPendingSave}
-          network={batch.network}
-          assetCode={batch.assetCode}
-          assetIssuer={batch.assetIssuer}
-          patchNetworkAsset={patchNetworkAsset}
         />
       )}
 
@@ -494,8 +531,7 @@ export default function BatchReviewPage() {
             )}
           </div>
           <RecipientsTable
-            rows={rows}
-            recipientById={recipientById}
+            recipients={batch.recipients}
             batch={batch}
             busyRowIds={busyRowIds}
             bulkBusy={bulkBusy}
@@ -525,8 +561,7 @@ export default function BatchReviewPage() {
             )}
           </div>
           <RecipientsTable
-            rows={rows}
-            recipientById={recipientById}
+            recipients={batch.recipients}
             batch={batch}
             busyRowIds={busyRowIds}
             bulkBusy={bulkBusy}
@@ -554,29 +589,90 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-const fieldInputClass =
-  "rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-50";
+const cardFieldClass =
+  "w-full rounded-md border border-hairline bg-paper px-2 py-1 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
 
-function PrepareSection({
-  rows,
-  canEdit,
-  onTextChange,
-  flushPendingSave,
+function NetworkField({
   network,
   assetCode,
   assetIssuer,
   patchNetworkAsset,
 }: {
-  rows: EditableRow[];
-  canEdit: boolean;
-  onTextChange: (text: string) => void;
-  flushPendingSave: () => void;
   network: string;
   assetCode: string | null;
   assetIssuer: string | null;
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
-  const text = useMemo(() => rowsToText(rows), [rows]);
+  return (
+    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
+      <select
+        value={network}
+        onChange={(e) =>
+          patchNetworkAsset({ network: e.target.value, assetCode: assetCode ?? "", assetIssuer: assetIssuer ?? "" })
+        }
+        className={`${cardFieldClass} mt-1.5`}
+      >
+        <option value="TESTNET">Testnet</option>
+        <option value="PUBLIC">Public (Mainnet)</option>
+      </select>
+    </div>
+  );
+}
+
+function AssetField({
+  network,
+  assetCode,
+  assetIssuer,
+  patchNetworkAsset,
+}: {
+  network: string;
+  assetCode: string | null;
+  assetIssuer: string | null;
+  patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
+      <div key={`${assetCode}-${assetIssuer}`} className="mt-1.5 flex flex-col gap-1.5">
+        <input
+          defaultValue={assetCode ?? ""}
+          onBlur={(e) => {
+            const code = e.target.value.trim().toUpperCase();
+            if (code !== (assetCode ?? "")) {
+              patchNetworkAsset({ network, assetCode: code, assetIssuer: assetIssuer ?? "" });
+            }
+          }}
+          placeholder="XLM"
+          className={cardFieldClass}
+        />
+        <input
+          defaultValue={assetIssuer ?? ""}
+          onBlur={(e) => {
+            const issuer = e.target.value.trim();
+            if (issuer !== (assetIssuer ?? "")) {
+              patchNetworkAsset({ network, assetCode: assetCode ?? "", assetIssuer: issuer });
+            }
+          }}
+          placeholder="Issuer G..."
+          className={`${cardFieldClass} font-mono text-xs`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PrepareSection({
+  text,
+  canEdit,
+  onTextChange,
+  flushPendingSave,
+}: {
+  text: string;
+  canEdit: boolean;
+  onTextChange: (text: string) => void;
+  flushPendingSave: () => void;
+}) {
   return (
     <div className="rounded-lg border border-hairline bg-surface p-6">
       <RecipientsEditor value={text} onChange={onTextChange} onBlur={flushPendingSave} readOnly={!canEdit} />
@@ -584,63 +680,12 @@ function PrepareSection({
         Addresses and account status are checked automatically as you edit — switch to Confirm once
         recipients look ready.
       </p>
-
-      <div key={`${network}-${assetCode}-${assetIssuer}`}>
-        <div className="mt-6 flex flex-col gap-2">
-          <label className="text-sm font-medium text-ink">Network</label>
-          <select
-            value={network}
-            disabled={!canEdit}
-            onChange={(e) =>
-              patchNetworkAsset({ network: e.target.value, assetCode: assetCode ?? "", assetIssuer: assetIssuer ?? "" })
-            }
-            className={fieldInputClass}
-          >
-            <option value="TESTNET">Testnet</option>
-            <option value="PUBLIC">Public (Mainnet)</option>
-          </select>
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-ink">Asset code (blank = XLM)</label>
-            <input
-              defaultValue={assetCode ?? ""}
-              disabled={!canEdit}
-              onBlur={(e) => {
-                const code = e.target.value.trim().toUpperCase();
-                if (code !== (assetCode ?? "")) {
-                  patchNetworkAsset({ network, assetCode: code, assetIssuer: assetIssuer ?? "" });
-                }
-              }}
-              placeholder="USDC"
-              className={fieldInputClass}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-ink">Asset issuer</label>
-            <input
-              defaultValue={assetIssuer ?? ""}
-              disabled={!canEdit}
-              onBlur={(e) => {
-                const issuer = e.target.value.trim();
-                if (issuer !== (assetIssuer ?? "")) {
-                  patchNetworkAsset({ network, assetCode: assetCode ?? "", assetIssuer: issuer });
-                }
-              }}
-              placeholder="G..."
-              className={fieldInputClass}
-            />
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
 
 function RecipientsTable({
-  rows,
-  recipientById,
+  recipients,
   batch,
   busyRowIds,
   bulkBusy,
@@ -648,8 +693,7 @@ function RecipientsTable({
   copyAddress,
   txHashByRecipient,
 }: {
-  rows: EditableRow[];
-  recipientById: Map<string, Recipient>;
+  recipients: Recipient[];
   batch: Batch;
   busyRowIds: Set<string>;
   bulkBusy: string | null;
@@ -674,90 +718,78 @@ function RecipientsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => {
-              const r = recipientById.get(row.id);
-              const isNew = !r;
-              return (
-                <tr key={row.id} className="border-b border-hairline last:border-0">
-                  <td className="px-3 py-3 tabular-nums text-ink-muted">{r?.rowIndex ?? i + 1}</td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-1">
-                      <span className={`font-mono text-xs ${r?.addressValid ? "text-success" : "text-danger"}`}>
-                        {row.destination}
-                      </span>
-                      {row.destination && (
-                        <>
-                          <button
-                            onClick={() => copyAddress(row.destination)}
-                            title="Copy address"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
-                          >
-                            <CopyIcon />
-                          </button>
-                          <a
-                            href={explorerAccountUrl(batch.network, row.destination)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open in explorer"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
-                          >
-                            <ExternalLinkIcon />
-                          </a>
-                        </>
-                      )}
-                      {r?.isDuplicate && (
-                        <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
-                          dup
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 tabular-nums text-ink">{row.amount}</td>
-                  <td className="px-3 py-3 text-ink-muted">
-                    {isNew ? "—" : r.accountExists === null ? "—" : r.accountExists ? "Yes" : "No"}
-                  </td>
-                  <td className="px-3 py-3 tabular-nums text-ink-muted">
-                    {isNew ? "—" : (r.currentBalance ?? "—")}
-                  </td>
-                  <td className="px-3 py-3">
-                    {isNew ? (
-                      <span className="rounded-full bg-sidebar px-2.5 py-1 text-xs font-medium text-ink-muted">
-                        New
-                      </span>
-                    ) : (
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
-                        {STATUS_LABEL[r.status] ?? r.status}
+            {recipients.map((r) => (
+              <tr key={r.id} className="border-b border-hairline last:border-0">
+                <td className="px-3 py-3 tabular-nums text-ink-muted">{r.rowIndex}</td>
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-1">
+                    <span className={`font-mono text-xs ${r.addressValid ? "text-success" : "text-danger"}`}>
+                      {r.destination}
+                    </span>
+                    {r.destination && (
+                      <>
+                        <button
+                          onClick={() => copyAddress(r.destination)}
+                          title="Copy address"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                        >
+                          <CopyIcon />
+                        </button>
+                        <a
+                          href={explorerAccountUrl(batch.network, r.destination)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open in explorer"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                        >
+                          <ExternalLinkIcon />
+                        </a>
+                      </>
+                    )}
+                    {r.isDuplicate && (
+                      <span className="shrink-0 rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-medium text-warning">
+                        dup
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-3 text-ink-muted">
-                    {r?.errorMessage}
-                    {r && txHashByRecipient.has(r.id) && (
-                      <a
-                        href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono text-xs text-accent hover:underline"
-                      >
-                        view tx ↗
-                      </a>
-                    )}
-                  </td>
-                  <td className="px-3 py-3">
-                    {r && r.addressValid && !r.isDuplicate && RECHECKABLE_STATUSES.has(r.status) && (
-                      <button
-                        onClick={() => refreshOne(r.id)}
-                        disabled={busyRowIds.has(r.id) || bulkBusy !== null}
-                        title="Refresh this address"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
-                      >
-                        <RefreshIcon spinning={busyRowIds.has(r.id)} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                  </div>
+                </td>
+                <td className="px-3 py-3 tabular-nums text-ink">{r.amount}</td>
+                <td className="px-3 py-3 text-ink-muted">
+                  {r.accountExists === null ? "—" : r.accountExists ? "Yes" : "No"}
+                </td>
+                <td className="px-3 py-3 tabular-nums text-ink-muted">{r.currentBalance ?? "—"}</td>
+                <td className="px-3 py-3">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(r.status)}`}>
+                    {STATUS_LABEL[r.status] ?? r.status}
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-ink-muted">
+                  {r.errorMessage}
+                  {txHashByRecipient.has(r.id) && (
+                    <a
+                      href={explorerTxUrl(batch.network, txHashByRecipient.get(r.id)!)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs text-accent hover:underline"
+                    >
+                      view tx ↗
+                    </a>
+                  )}
+                </td>
+                <td className="px-3 py-3">
+                  {r.addressValid && !r.isDuplicate && RECHECKABLE_STATUSES.has(r.status) && (
+                    <button
+                      onClick={() => refreshOne(r.id)}
+                      disabled={busyRowIds.has(r.id) || bulkBusy !== null}
+                      title="Refresh this address"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:opacity-40"
+                    >
+                      <RefreshIcon spinning={busyRowIds.has(r.id)} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
