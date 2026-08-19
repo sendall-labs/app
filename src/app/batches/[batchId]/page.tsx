@@ -157,6 +157,11 @@ type KnownAsset = {
   code: string;
   domain: string;
   accentClass: string;
+  // Real brand icon, downloaded from Stellar Lab / stellar.expert and
+  // served locally (public/assets/tokens) instead of hotlinked — no
+  // external request at render time, nothing to break if a third-party
+  // CDN changes. null falls back to the monogram badge below.
+  icon: string | null;
   // null = native XLM, no issuer needed. Otherwise the verified issuer per
   // network — an asset not listed for a given network (AQUA has no
   // testnet entry below) is filtered out of the picker while that
@@ -166,24 +171,42 @@ type KnownAsset = {
 
 // Every issuer here is verified against an official source — never invent
 // one from memory, a wrong address silently misdirects funds:
-// - USDC: developers.circle.com/stablecoins/usdc-contract-addresses
+// - USDC/EURC: developers.circle.com/stablecoins/{usdc,eurc}-contract-addresses
 // - AQUA: aqua.network/.well-known/stellar.toml (mainnet only; Aquarius
 //   doesn't run a testnet issuer)
 const KNOWN_ASSETS: KnownAsset[] = [
-  { code: "XLM", domain: "Stellar Network", accentClass: "bg-ink text-paper", issuer: null },
+  {
+    code: "XLM",
+    domain: "Stellar Network",
+    accentClass: "bg-ink text-paper",
+    icon: "/assets/tokens/xlm.png",
+    issuer: null,
+  },
   {
     code: "USDC",
     domain: "circle.com",
     accentClass: "bg-[#2775CA] text-white",
+    icon: "/assets/tokens/usdc.png",
     issuer: {
       PUBLIC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
       TESTNET: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
     },
   },
   {
+    code: "EURC",
+    domain: "circle.com",
+    accentClass: "bg-[#2775CA] text-white",
+    icon: "/assets/tokens/eurc.png",
+    issuer: {
+      PUBLIC: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+      TESTNET: "GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO",
+    },
+  },
+  {
     code: "AQUA",
     domain: "aqua.network",
     accentClass: "bg-[#8B5CF6] text-white",
+    icon: null,
     issuer: { PUBLIC: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
   },
 ];
@@ -862,19 +885,11 @@ function NetworkField({
   );
 }
 
-function AssetIcon({ code, accentClass }: { code: string; accentClass: string }) {
-  if (code === "XLM") {
-    return (
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${accentClass}`}>
-        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <path
-            d="M5 15.5 19 8M5 15.5l3.2-1M5 15.5l1-3.2M19 8l-3.2 1M19 8l-1 3.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
-    );
+function AssetIcon({ code, accentClass, icon }: { code: string; accentClass: string; icon?: string | null }) {
+  if (icon) {
+    // Small fixed local file (public/assets/tokens) — not worth next/image's pipeline.
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={icon} alt={code} className="h-8 w-8 shrink-0 rounded-full" />;
   }
   return (
     <span
@@ -996,7 +1011,11 @@ function AssetField({
         onClick={() => setOpen((v) => !v)}
         className="mt-2 flex w-full cursor-pointer items-center gap-3 rounded-md border border-hairline bg-paper px-3 py-2 text-left hover:border-accent"
       >
-        <AssetIcon code={currentCode} accentClass={known?.accentClass ?? "bg-sidebar text-ink-muted"} />
+        <AssetIcon
+          code={currentCode}
+          accentClass={known?.accentClass ?? "bg-sidebar text-ink-muted"}
+          icon={known?.icon}
+        />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-ink">{currentCode}</span>
           <span className="block truncate text-xs text-ink-faint">{known?.domain ?? "Custom asset"}</span>
@@ -1045,7 +1064,7 @@ function AssetField({
                 onClick={() => selectAsset(a)}
                 className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left hover:bg-sidebar"
               >
-                <AssetIcon code={a.code} accentClass={a.accentClass} />
+                <AssetIcon code={a.code} accentClass={a.accentClass} icon={a.icon} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-ink">{a.code}</span>
                   <span className="block truncate text-xs text-ink-faint">{a.domain}</span>
