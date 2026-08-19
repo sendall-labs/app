@@ -206,7 +206,7 @@ const KNOWN_ASSETS: KnownAsset[] = [
     code: "AQUA",
     domain: "aqua.network",
     accentClass: "bg-[#8B5CF6] text-white",
-    icon: null,
+    icon: "/assets/tokens/aqua.png",
     issuer: { PUBLIC: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
   },
 ];
