@@ -153,6 +153,36 @@ function formatAmount(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 7 });
 }
 
+type KnownAsset = {
+  code: string;
+  name: string;
+  // null = native XLM, no issuer. Otherwise the verified issuer per
+  // network — most assets (this one included) use a different account on
+  // testnet than on mainnet, so picking one from the list has to re-resolve
+  // the issuer if the network changes underneath it.
+  issuer: { TESTNET: string; PUBLIC: string } | null;
+};
+
+// Issuers verified against Circle's own contract-address docs
+// (developers.circle.com/stablecoins/usdc-contract-addresses) — never
+// invent an issuer address here, a wrong one silently misdirects funds.
+const KNOWN_ASSETS: KnownAsset[] = [
+  { code: "XLM", name: "Stellar Lumens", issuer: null },
+  {
+    code: "USDC",
+    name: "USD Coin",
+    issuer: {
+      PUBLIC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      TESTNET: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    },
+  },
+];
+
+function findKnownAsset(code: string): KnownAsset | undefined {
+  const upper = code.trim().toUpperCase();
+  return KNOWN_ASSETS.find((a) => a.code === upper);
+}
+
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
     <svg
@@ -799,9 +829,18 @@ function NetworkField({
       <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
       <select
         value={network}
-        onChange={(e) =>
-          patchNetworkAsset({ network: e.target.value, assetCode: assetCode ?? "", assetIssuer: assetIssuer ?? "" })
-        }
+        onChange={(e) => {
+          const nextNetwork = e.target.value;
+          // A known asset's issuer differs by network — re-resolve it for
+          // whichever network is being switched to instead of carrying the
+          // old (now wrong) one over. A custom/unrecognized issuer is left
+          // exactly as the user entered it.
+          const known = assetCode ? findKnownAsset(assetCode) : undefined;
+          const nextIssuer = known?.issuer
+            ? known.issuer[nextNetwork as "TESTNET" | "PUBLIC"]
+            : (assetIssuer ?? "");
+          patchNetworkAsset({ network: nextNetwork, assetCode: assetCode ?? "", assetIssuer: nextIssuer });
+        }}
         className={`${cardFieldClass} mt-1.5`}
       >
         <option value="TESTNET">Testnet</option>
@@ -822,32 +861,62 @@ function AssetField({
   assetIssuer: string | null;
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
+  // Blank defaults to native XLM — shown as "XLM" outright rather than an
+  // empty box the user has to already know means the same thing.
+  const currentCode = assetCode ?? "XLM";
+  const known = findKnownAsset(currentCode);
+  const isCustom = currentCode !== "XLM" && !known;
+
   return (
     <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
       <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
       <div key={`${assetCode}-${assetIssuer}`} className="mt-1.5 flex flex-col gap-1.5">
         <input
-          defaultValue={assetCode ?? ""}
+          list="known-assets"
+          defaultValue={currentCode}
           onBlur={(e) => {
             const code = e.target.value.trim().toUpperCase();
-            if (code !== (assetCode ?? "")) {
-              patchNetworkAsset({ network, assetCode: code, assetIssuer: assetIssuer ?? "" });
+            if (!code || code === "XLM") {
+              if (assetCode) patchNetworkAsset({ network, assetCode: "", assetIssuer: "" });
+              return;
+            }
+            const match = findKnownAsset(code);
+            if (match?.issuer) {
+              const issuer = match.issuer[network as "TESTNET" | "PUBLIC"];
+              if (code !== currentCode || issuer !== (assetIssuer ?? "")) {
+                patchNetworkAsset({ network, assetCode: code, assetIssuer: issuer });
+              }
+            } else if (code !== currentCode) {
+              // Switching to an unrecognized code from a *different* asset
+              // — clear the issuer instead of carrying over the old one
+              // (e.g. USDC's), which would sit there looking like it
+              // already applied to this new code.
+              patchNetworkAsset({ network, assetCode: code, assetIssuer: "" });
             }
           }}
           placeholder="XLM"
           className={cardFieldClass}
         />
-        <input
-          defaultValue={assetIssuer ?? ""}
-          onBlur={(e) => {
-            const issuer = e.target.value.trim();
-            if (issuer !== (assetIssuer ?? "")) {
-              patchNetworkAsset({ network, assetCode: assetCode ?? "", assetIssuer: issuer });
-            }
-          }}
-          placeholder="Issuer G..."
-          className={`${cardFieldClass} font-mono text-xs`}
-        />
+        <datalist id="known-assets">
+          {KNOWN_ASSETS.map((a) => (
+            <option key={a.code} value={a.code}>
+              {a.name}
+            </option>
+          ))}
+        </datalist>
+        {isCustom && (
+          <input
+            defaultValue={assetIssuer ?? ""}
+            onBlur={(e) => {
+              const issuer = e.target.value.trim();
+              if (issuer !== (assetIssuer ?? "")) {
+                patchNetworkAsset({ network, assetCode: currentCode, assetIssuer: issuer });
+              }
+            }}
+            placeholder="Issuer G..."
+            className={`${cardFieldClass} font-mono text-xs`}
+          />
+        )}
       </div>
     </div>
   );
