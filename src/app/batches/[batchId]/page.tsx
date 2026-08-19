@@ -918,7 +918,30 @@ function AssetField({
   const [mode, setMode] = useState<"search" | "custom">(currentCode !== "XLM" && !known ? "custom" : "search");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [resolvedIcon, setResolvedIcon] = useState<{ code: string; issuer: string; image: string | null; name: string | null } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Custom assets don't ship a local icon — look one up the way a wallet
+  // actually should (SEP-1: home_domain -> stellar.toml -> CURRENCIES
+  // .image) instead of showing a bare monogram forever.
+  useEffect(() => {
+    if (known || !assetCode || !assetIssuer || !/^G[A-Z2-7]{55}$/.test(assetIssuer)) return;
+    let cancelled = false;
+    const code = assetCode;
+    const issuer = assetIssuer;
+    fetch(`/api/assets/icon?network=${network}&code=${encodeURIComponent(code)}&issuer=${issuer}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setResolvedIcon({ code, issuer, ...data });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [known, assetCode, assetIssuer, network]);
+
+  const customIcon =
+    resolvedIcon && resolvedIcon.code === assetCode && resolvedIcon.issuer === assetIssuer ? resolvedIcon : null;
 
   useEffect(() => {
     if (!open) return;
@@ -966,6 +989,12 @@ function AssetField({
             Browse known assets
           </button>
         </div>
+        {assetCode && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-ink-faint">
+            <AssetIcon code={assetCode} accentClass="bg-sidebar text-ink-muted" icon={customIcon?.image} />
+            {customIcon?.name ?? "Looked up automatically from the issuer's stellar.toml"}
+          </div>
+        )}
         <div key={`${assetCode}-${assetIssuer}`} className="mt-2 flex flex-col gap-1.5">
           <input
             defaultValue={currentCode === "XLM" ? "" : currentCode}
