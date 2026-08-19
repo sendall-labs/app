@@ -22,7 +22,18 @@ export const NETWORK_CONFIG: Record<
 };
 
 export function getRpcServer(network: Network): rpc.Server {
-  return new rpc.Server(NETWORK_CONFIG[network].rpcUrl);
+  const { rpcUrl } = NETWORK_CONFIG[network];
+  if (!rpcUrl) {
+    // `new rpc.Server("")` throws a bare "Invalid URL" with no context —
+    // this is the actual cause every time, so say so instead of letting
+    // that cryptic message reach the client.
+    throw new Error(
+      network === "PUBLIC"
+        ? "Mainnet RPC isn't configured — set NEXT_PUBLIC_MAINNET_RPC_URL to a provider (SDF doesn't run a free public one for mainnet)."
+        : `No RPC URL configured for ${network}.`
+    );
+  }
+  return new rpc.Server(rpcUrl);
 }
 
 export function getNetworkPassphrase(network: Network): string {
