@@ -607,7 +607,7 @@ export default function BatchReviewPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {canEdit ? (
           <NetworkField
             network={batch.network}
@@ -628,6 +628,9 @@ export default function BatchReviewPage() {
         ) : (
           <InfoField label="Asset" value={batch.assetCode ?? "XLM"} />
         )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <InfoField label="Recipients" value={String(recipientCount)} />
         <InfoField
           label="Total to send"
@@ -792,7 +795,7 @@ function NetworkField({
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
   return (
-    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+    <div className="flex flex-col justify-center rounded-lg border border-hairline bg-surface px-5 py-4">
       <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
       <select
         value={network}
