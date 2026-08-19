@@ -155,32 +155,46 @@ function formatAmount(n: number): string {
 
 type KnownAsset = {
   code: string;
-  name: string;
-  // null = native XLM, no issuer. Otherwise the verified issuer per
-  // network — most assets (this one included) use a different account on
-  // testnet than on mainnet, so picking one from the list has to re-resolve
-  // the issuer if the network changes underneath it.
-  issuer: { TESTNET: string; PUBLIC: string } | null;
+  domain: string;
+  accentClass: string;
+  // null = native XLM, no issuer needed. Otherwise the verified issuer per
+  // network — an asset not listed for a given network (AQUA has no
+  // testnet entry below) is filtered out of the picker while that
+  // network's selected, rather than showing an issuer that doesn't exist.
+  issuer: Partial<Record<"TESTNET" | "PUBLIC", string>> | null;
 };
 
-// Issuers verified against Circle's own contract-address docs
-// (developers.circle.com/stablecoins/usdc-contract-addresses) — never
-// invent an issuer address here, a wrong one silently misdirects funds.
+// Every issuer here is verified against an official source — never invent
+// one from memory, a wrong address silently misdirects funds:
+// - USDC: developers.circle.com/stablecoins/usdc-contract-addresses
+// - AQUA: aqua.network/.well-known/stellar.toml (mainnet only; Aquarius
+//   doesn't run a testnet issuer)
 const KNOWN_ASSETS: KnownAsset[] = [
-  { code: "XLM", name: "Stellar Lumens", issuer: null },
+  { code: "XLM", domain: "Stellar Network", accentClass: "bg-ink text-paper", issuer: null },
   {
     code: "USDC",
-    name: "USD Coin",
+    domain: "circle.com",
+    accentClass: "bg-[#2775CA] text-white",
     issuer: {
       PUBLIC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
       TESTNET: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
     },
+  },
+  {
+    code: "AQUA",
+    domain: "aqua.network",
+    accentClass: "bg-[#8B5CF6] text-white",
+    issuer: { PUBLIC: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
   },
 ];
 
 function findKnownAsset(code: string): KnownAsset | undefined {
   const upper = code.trim().toUpperCase();
   return KNOWN_ASSETS.find((a) => a.code === upper);
+}
+
+function issuerForNetwork(asset: KnownAsset, network: string): string | undefined {
+  return asset.issuer?.[network as "TESTNET" | "PUBLIC"];
 }
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
@@ -836,9 +850,7 @@ function NetworkField({
           // old (now wrong) one over. A custom/unrecognized issuer is left
           // exactly as the user entered it.
           const known = assetCode ? findKnownAsset(assetCode) : undefined;
-          const nextIssuer = known?.issuer
-            ? known.issuer[nextNetwork as "TESTNET" | "PUBLIC"]
-            : (assetIssuer ?? "");
+          const nextIssuer = known ? (issuerForNetwork(known, nextNetwork) ?? "") : (assetIssuer ?? "");
           patchNetworkAsset({ network: nextNetwork, assetCode: assetCode ?? "", assetIssuer: nextIssuer });
         }}
         className={`${cardFieldClass} mt-1.5`}
@@ -847,6 +859,29 @@ function NetworkField({
         <option value="PUBLIC">Public (Mainnet)</option>
       </select>
     </div>
+  );
+}
+
+function AssetIcon({ code, accentClass }: { code: string; accentClass: string }) {
+  if (code === "XLM") {
+    return (
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${accentClass}`}>
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <path
+            d="M5 15.5 19 8M5 15.5l3.2-1M5 15.5l1-3.2M19 8l-3.2 1M19 8l-1 3.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${accentClass}`}
+    >
+      {code.slice(0, 1)}
+    </span>
   );
 }
 
@@ -865,46 +900,78 @@ function AssetField({
   // empty box the user has to already know means the same thing.
   const currentCode = assetCode ?? "XLM";
   const known = findKnownAsset(currentCode);
-  const isCustom = currentCode !== "XLM" && !known;
+  const [mode, setMode] = useState<"search" | "custom">(currentCode !== "XLM" && !known ? "custom" : "search");
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  return (
-    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
-      <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
-      <div key={`${assetCode}-${assetIssuer}`} className="mt-1.5 flex flex-col gap-1.5">
-        <input
-          list="known-assets"
-          defaultValue={currentCode}
-          onBlur={(e) => {
-            const code = e.target.value.trim().toUpperCase();
-            if (!code || code === "XLM") {
-              if (assetCode) patchNetworkAsset({ network, assetCode: "", assetIssuer: "" });
-              return;
-            }
-            const match = findKnownAsset(code);
-            if (match?.issuer) {
-              const issuer = match.issuer[network as "TESTNET" | "PUBLIC"];
-              if (code !== currentCode || issuer !== (assetIssuer ?? "")) {
-                patchNetworkAsset({ network, assetCode: code, assetIssuer: issuer });
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const visibleAssets = KNOWN_ASSETS.filter((a) => a.issuer === null || issuerForNetwork(a, network));
+  const filtered = visibleAssets.filter((a) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return a.code.toLowerCase().includes(q) || a.domain.toLowerCase().includes(q);
+  });
+
+  const selectAsset = (asset: KnownAsset) => {
+    patchNetworkAsset({
+      network,
+      assetCode: asset.code === "XLM" ? "" : asset.code,
+      assetIssuer: issuerForNetwork(asset, network) ?? "",
+    });
+    setOpen(false);
+    setQuery("");
+  };
+
+  if (mode === "custom") {
+    return (
+      <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+        <div className="flex items-center justify-between">
+          <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
+          <button
+            type="button"
+            onClick={() => setMode("search")}
+            className="cursor-pointer text-xs font-medium text-accent hover:underline"
+          >
+            Browse known assets
+          </button>
+        </div>
+        <div key={`${assetCode}-${assetIssuer}`} className="mt-2 flex flex-col gap-1.5">
+          <input
+            defaultValue={currentCode === "XLM" ? "" : currentCode}
+            onBlur={(e) => {
+              const code = e.target.value.trim().toUpperCase();
+              if (!code || code === "XLM") {
+                if (assetCode) patchNetworkAsset({ network, assetCode: "", assetIssuer: "" });
+                setMode("search");
+                return;
               }
-            } else if (code !== currentCode) {
-              // Switching to an unrecognized code from a *different* asset
-              // — clear the issuer instead of carrying over the old one
-              // (e.g. USDC's), which would sit there looking like it
-              // already applied to this new code.
-              patchNetworkAsset({ network, assetCode: code, assetIssuer: "" });
-            }
-          }}
-          placeholder="XLM"
-          className={cardFieldClass}
-        />
-        <datalist id="known-assets">
-          {KNOWN_ASSETS.map((a) => (
-            <option key={a.code} value={a.code}>
-              {a.name}
-            </option>
-          ))}
-        </datalist>
-        {isCustom && (
+              const match = findKnownAsset(code);
+              if (match?.issuer) {
+                patchNetworkAsset({ network, assetCode: code, assetIssuer: issuerForNetwork(match, network) ?? "" });
+                setMode("search");
+              } else if (code !== currentCode) {
+                patchNetworkAsset({ network, assetCode: code, assetIssuer: "" });
+              }
+            }}
+            placeholder="Asset code"
+            className={cardFieldClass}
+          />
           <input
             defaultValue={assetIssuer ?? ""}
             onBlur={(e) => {
@@ -916,8 +983,91 @@ function AssetField({
             placeholder="Issuer G..."
             className={`${cardFieldClass} font-mono text-xs`}
           />
-        )}
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="relative rounded-lg border border-hairline bg-surface px-5 py-4">
+      <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="mt-2 flex w-full cursor-pointer items-center gap-3 rounded-md border border-hairline bg-paper px-3 py-2 text-left hover:border-accent"
+      >
+        <AssetIcon code={currentCode} accentClass={known?.accentClass ?? "bg-sidebar text-ink-muted"} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-ink">{currentCode}</span>
+          <span className="block truncate text-xs text-ink-faint">{known?.domain ?? "Custom asset"}</span>
+        </span>
+        <svg
+          viewBox="0 0 20 20"
+          className={`h-4 w-4 shrink-0 text-ink-faint transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
+          <path d="M5 7.5 10 12.5 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-hairline bg-surface shadow-lg">
+          <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
+            <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <circle cx="9" cy="9" r="6" />
+              <path d="m17 17-4-4" strokeLinecap="round" />
+            </svg>
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Type asset name or code"
+              className="flex-1 bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="cursor-pointer text-ink-faint hover:text-ink"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <p className="px-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">Known assets</p>
+          <div className="max-h-64 overflow-y-auto py-1">
+            {filtered.map((a) => (
+              <button
+                key={a.code}
+                type="button"
+                onClick={() => selectAsset(a)}
+                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left hover:bg-sidebar"
+              >
+                <AssetIcon code={a.code} accentClass={a.accentClass} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">{a.code}</span>
+                  <span className="block truncate text-xs text-ink-faint">{a.domain}</span>
+                </span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-3 py-4 text-center text-xs text-ink-faint">No known assets match &ldquo;{query}&rdquo;.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setMode("custom");
+            }}
+            className="block w-full cursor-pointer border-t border-hairline px-3 py-2 text-left text-xs font-medium text-accent hover:underline"
+          >
+            + Enter a custom asset
+          </button>
+        </div>
+      )}
     </div>
   );
 }
