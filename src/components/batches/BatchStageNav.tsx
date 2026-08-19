@@ -39,7 +39,7 @@ export function BatchStageNav({
             type="button"
             disabled={!enabled}
             onClick={() => onSelect?.(stage.key)}
-            className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-2 rounded-t-sm border-b-2 px-1 pb-3 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
               enabled ? "cursor-pointer" : "cursor-default"
             } ${
               isCurrent

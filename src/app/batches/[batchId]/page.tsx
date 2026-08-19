@@ -33,6 +33,7 @@ type Batch = {
   assetIssuer: string | null;
   sourceAccount: string;
   csvFileName: string | null;
+  createdAt: string;
   recipients: Recipient[];
   attempts: Attempt[];
 };
@@ -57,9 +58,22 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_PILL: Record<string, string> = {
   READY: "bg-success-soft text-success",
   SUCCESS: "bg-success-soft text-success",
+  COMPLETED: "bg-success-soft text-success",
   FAILED: "bg-danger-soft text-danger",
   CHECK_FAILED: "bg-danger-soft text-danger",
   VALIDATION_FAILED: "bg-danger-soft text-danger",
+  PARTIAL_FAILURE: "bg-danger-soft text-danger",
+};
+
+const BATCH_STATUS_LABEL: Record<string, string> = {
+  DRAFT: "Draft",
+  VALIDATED: "Validated",
+  CHECKING: "Checking…",
+  READY: "Ready",
+  SUBMITTING: "Sending…",
+  COMPLETED: "Completed",
+  PARTIAL_FAILURE: "Partial failure",
+  FAILED: "Failed",
 };
 
 const RECHECKABLE_STATUSES = new Set(["PENDING", "READY", "CHECK_FAILED"]);
@@ -122,8 +136,21 @@ function sumAmounts(rows: EditableRow[]): number {
   }, 0);
 }
 
+// A batch created via "New batch" has no csvFileName (nothing was ever
+// uploaded) — falling back to the raw cuid there read as an internal
+// implementation detail leaking into the UI, so this is what shows
+// instead.
+function formatCreatedAt(iso: string): string {
+  const d = new Date(iso);
+  return `Created ${d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
+
+// Fixed to en-US regardless of the viewer's locale — every amount
+// elsewhere in this app (the textarea, the recipient inputs, the raw CSV
+// format) is period-decimal, so a locale like tr-TR rendering this as
+// "23,7" would silently disagree with everything else on the page.
 function formatAmount(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 7 });
+  return n.toLocaleString("en-US", { maximumFractionDigits: 7 });
 }
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
@@ -575,7 +602,7 @@ export default function BatchReviewPage() {
       <div>
         <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
         <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
-          {batch.csvFileName ?? batch.id}
+          {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
         </p>
       </div>
@@ -610,7 +637,7 @@ export default function BatchReviewPage() {
           label="Status"
           value={
             <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(batch.status)}`}>
-              {batch.status}
+              {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
             </span>
           }
         />
