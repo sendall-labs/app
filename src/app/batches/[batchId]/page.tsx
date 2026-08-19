@@ -600,42 +600,51 @@ export default function BatchReviewPage() {
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
-          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(batch.status)}`}>
-            {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
-          </span>
+        <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
+        <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
+          {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
-        </div>
-        <p className="mt-1.5 text-sm text-ink-muted">
-          {[
-            batch.csvFileName ?? formatCreatedAt(batch.createdAt),
-            recipientCount > 0 ? `${recipientCount} recipient${recipientCount === 1 ? "" : "s"}` : null,
-            recipientCount > 0 ? `${formatAmount(totalAmount)} ${batch.assetCode ?? "XLM"} total` : null,
-            !canEdit ? (batch.network === "PUBLIC" ? "Public Network" : "Testnet") : null,
-            !canEdit ? (batch.assetCode ?? "XLM") : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
         </p>
       </div>
 
-      {canEdit && (
-        <div className="grid grid-cols-1 gap-6 rounded-lg border border-hairline bg-surface p-5 sm:grid-cols-[200px_1fr]">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {canEdit ? (
           <NetworkField
             network={batch.network}
             assetCode={batch.assetCode}
             assetIssuer={batch.assetIssuer}
             patchNetworkAsset={patchNetworkAsset}
           />
+        ) : (
+          <InfoField label="Network" value={batch.network} />
+        )}
+        {canEdit ? (
           <AssetField
             network={batch.network}
             assetCode={batch.assetCode}
             assetIssuer={batch.assetIssuer}
             patchNetworkAsset={patchNetworkAsset}
           />
-        </div>
-      )}
+        ) : (
+          <InfoField label="Asset" value={batch.assetCode ?? "XLM"} />
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <InfoField label="Recipients" value={String(recipientCount)} />
+        <InfoField
+          label="Total to send"
+          value={`${formatAmount(totalAmount)} ${batch.assetCode ?? "XLM"}`}
+        />
+        <InfoField
+          label="Status"
+          value={
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusPillClass(batch.status)}`}>
+              {BATCH_STATUS_LABEL[batch.status] ?? batch.status}
+            </span>
+          }
+        />
+      </div>
 
       {displayedStage === "prepare" && (
         <PrepareSection
@@ -762,8 +771,17 @@ export default function BatchReviewPage() {
   );
 }
 
-const fieldInputClass =
-  "rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
+function InfoField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <p className="text-xs uppercase tracking-wide text-ink-faint">{label}</p>
+      <div className="mt-1.5 text-sm font-medium text-ink">{value}</div>
+    </div>
+  );
+}
+
+const cardFieldClass =
+  "w-full rounded-md border border-hairline bg-paper px-2 py-1 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
 
 function NetworkField({
   network,
@@ -777,14 +795,14 @@ function NetworkField({
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="text-xs font-medium uppercase tracking-wide text-ink-faint">Network</label>
+    <div className="flex flex-col justify-center rounded-lg border border-hairline bg-surface px-5 py-4">
+      <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
       <select
         value={network}
         onChange={(e) =>
           patchNetworkAsset({ network: e.target.value, assetCode: assetCode ?? "", assetIssuer: assetIssuer ?? "" })
         }
-        className={`${fieldInputClass} w-full`}
+        className={`${cardFieldClass} mt-1.5`}
       >
         <option value="TESTNET">Testnet</option>
         <option value="PUBLIC">Public (Mainnet)</option>
@@ -805,9 +823,9 @@ function AssetField({
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="text-xs font-medium uppercase tracking-wide text-ink-faint">Asset</label>
-      <div key={`${assetCode}-${assetIssuer}`} className="flex gap-2">
+    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
+      <div key={`${assetCode}-${assetIssuer}`} className="mt-1.5 flex flex-col gap-1.5">
         <input
           defaultValue={assetCode ?? ""}
           onBlur={(e) => {
@@ -817,7 +835,7 @@ function AssetField({
             }
           }}
           placeholder="XLM"
-          className={`${fieldInputClass} w-24 shrink-0 uppercase`}
+          className={cardFieldClass}
         />
         <input
           defaultValue={assetIssuer ?? ""}
@@ -827,8 +845,8 @@ function AssetField({
               patchNetworkAsset({ network, assetCode: assetCode ?? "", assetIssuer: issuer });
             }
           }}
-          placeholder="Issuer address — leave blank for XLM"
-          className={`${fieldInputClass} flex-1 font-mono text-xs`}
+          placeholder="Issuer G..."
+          className={`${cardFieldClass} font-mono text-xs`}
         />
       </div>
     </div>
