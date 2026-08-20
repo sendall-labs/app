@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Account, Asset, Keypair, Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Account, Asset, Keypair, Operation, Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
 import { buildPaymentChunks, MAX_OPS_PER_TX } from "./txBuilder";
 
 const PASSPHRASE = "Test SDF Network ; September 2015";
@@ -24,6 +24,7 @@ describe("buildPaymentChunks", () => {
     });
     expect(chunks).toHaveLength(1);
     expect(chunks[0].operationCount).toBe(3);
+    expect(chunks[0].requiresSignature).toBe(true);
   });
 
   it("splits exactly at the 100-operation boundary", () => {
@@ -38,7 +39,7 @@ describe("buildPaymentChunks", () => {
     expect(chunks[0].operationCount).toBe(MAX_OPS_PER_TX);
   });
 
-  it("splits 101 recipients into two chunks (100 + 1)", () => {
+  it("splits 101 recipients into two chunks, reserving one op in the first for the preAuthTx chain", () => {
     const source = new Account(Keypair.random().publicKey(), "100");
     const chunks = buildPaymentChunks({
       network: "TESTNET",
@@ -47,8 +48,44 @@ describe("buildPaymentChunks", () => {
       recipients: randomRecipients(MAX_OPS_PER_TX + 1),
     });
     expect(chunks).toHaveLength(2);
-    expect(chunks[0].operationCount).toBe(100);
-    expect(chunks[1].operationCount).toBe(1);
+    // 99 payments + 1 reserved slot for the chaining SetOptions op.
+    expect(chunks[0].operationCount).toBe(99);
+    expect(chunks[1].operationCount).toBe(2);
+  });
+
+  it("only the first chunk of a multi-chunk batch requires a signature", () => {
+    const source = new Account(Keypair.random().publicKey(), "100");
+    const chunks = buildPaymentChunks({
+      network: "TESTNET",
+      sourceAccount: source,
+      asset: null,
+      recipients: randomRecipients(120),
+    });
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].requiresSignature).toBe(true);
+    expect(chunks[1].requiresSignature).toBe(false);
+  });
+
+  it("chains chunks via a preAuthTx signer whose hash matches the next chunk's transaction hash", () => {
+    const source = new Account(Keypair.random().publicKey(), "100");
+    const chunks = buildPaymentChunks({
+      network: "TESTNET",
+      sourceAccount: source,
+      asset: null,
+      recipients: randomRecipients(120),
+    });
+    const firstTx = TransactionBuilder.fromXDR(chunks[0].xdr, PASSPHRASE) as Transaction;
+    const secondTx = TransactionBuilder.fromXDR(chunks[1].xdr, PASSPHRASE) as Transaction;
+
+    const setOptionsOp = firstTx.operations[firstTx.operations.length - 1];
+    expect(setOptionsOp.type).toBe("setOptions");
+    const signer = (setOptionsOp as Operation.SetOptions).signer;
+    if (!signer || !("preAuthTx" in signer)) throw new Error("expected a preAuthTx signer");
+    expect(signer.preAuthTx.toString("hex")).toBe(secondTx.hash().toString("hex"));
+    expect(signer.weight).toBe(1);
+
+    // The last chunk has no chaining op — every operation is a real payment.
+    expect(secondTx.operations.every((op) => op.type === "payment")).toBe(true);
   });
 
   it("assigns strictly increasing sequence numbers across chunks, one per tx", () => {

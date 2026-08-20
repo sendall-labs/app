@@ -109,6 +109,10 @@ model PaymentAttempt {
   chunkIndex     Int
   sequenceNumber String?
   operationCount Int
+  // false when this attempt is authorized by a preAuthTx signer the
+  // previous chunk installed on-chain (see txBuilder.ts) — it must be
+  // submitted exactly as built, with no wallet signature requested.
+  requiresSignature Boolean       @default(true)
   status         AttemptStatus @default(BUILT)
   txHash         String?
   xdrEnvelope    String?       @db.Text

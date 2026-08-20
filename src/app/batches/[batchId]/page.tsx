@@ -580,7 +580,10 @@ export default function BatchReviewPage() {
       const { attempts } = await prepareRes.json();
 
       for (const attempt of attempts) {
-        const signedXdr = await signTransaction(attempt.xdr);
+        // A chunk chained via preAuthTx (see txBuilder.ts) is already
+        // authorized by the previous chunk landing on-chain — submit it
+        // exactly as built instead of prompting the wallet again.
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -607,7 +610,10 @@ export default function BatchReviewPage() {
       const { attempts } = await retryRes.json();
 
       for (const attempt of attempts) {
-        const signedXdr = await signTransaction(attempt.xdr);
+        // A chunk chained via preAuthTx (see txBuilder.ts) is already
+        // authorized by the previous chunk landing on-chain — submit it
+        // exactly as built instead of prompting the wallet again.
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

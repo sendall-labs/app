@@ -92,6 +92,7 @@ export async function POST(
             batchId: batch.id,
             chunkIndex: existingAttemptCount + i,
             operationCount: chunk.operationCount,
+            requiresSignature: chunk.requiresSignature,
             status: "BUILT",
             xdrEnvelope: chunk.xdr,
             items: {
@@ -114,6 +115,7 @@ export async function POST(
         chunkIndex: a.chunkIndex,
         xdr: a.xdrEnvelope,
         operationCount: a.operationCount,
+        requiresSignature: a.requiresSignature,
       })),
       stillFailing: stillFailing.length,
     });
