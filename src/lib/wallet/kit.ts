@@ -33,6 +33,28 @@ export function initWalletKit(network: Network) {
     ],
   });
   initialized = true;
+  warmUpWalletDetection();
+}
+
+// Freighter's isAvailable() check round-trips a postMessage to its content
+// script, and the kit races that against a hard 1s timeout (see
+// StellarWalletsKit.refreshSupportedWallets). Right after a fresh page load
+// the content script sometimes isn't listening yet, so the *first* connect
+// attempt loses that race and fails with "no wallet connected" even though
+// the wallet is installed — a second attempt right after then succeeds
+// because the extension is warm by then. Retry a few times in the
+// background so the extension is already warm before the user's first
+// real click, instead of making them click twice.
+function warmUpWalletDetection(attempt = 0) {
+  StellarWalletsKit.refreshSupportedWallets()
+    .then((wallets) => {
+      if (attempt < 4 && !wallets.some((w) => w.isAvailable)) {
+        setTimeout(() => warmUpWalletDetection(attempt + 1), 400);
+      }
+    })
+    .catch(() => {
+      if (attempt < 4) setTimeout(() => warmUpWalletDetection(attempt + 1), 400);
+    });
 }
 
 export { StellarWalletsKit, KitEventType } from "@creit.tech/stellar-wallets-kit";

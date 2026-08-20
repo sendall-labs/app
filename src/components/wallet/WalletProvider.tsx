@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Network } from "@/generated/prisma/enums";
 import { initWalletKit, networkToKitNetwork, StellarWalletsKit } from "@/lib/wallet/kit";
 
@@ -24,6 +24,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [network, setNetwork] = useState<Network>(DEFAULT_NETWORK);
   const [address, setAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  // Mirrors `address`, but updated synchronously — signTransaction/signMessage
+  // read this instead of the `address` state so a signMessage call made right
+  // after connect() (same tick, before React re-renders) doesn't see a stale
+  // closure where address is still null.
+  const addressRef = useRef<string | null>(null);
+
+  const updateAddress = useCallback((next: string | null) => {
+    addressRef.current = next;
+    setAddress(next);
+  }, []);
 
   useEffect(() => {
     initWalletKit(network);
@@ -33,49 +43,51 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     fetch("/api/auth/session")
       .then((res) => res.json())
       .then((data) => {
-        if (data.publicKey) setAddress(data.publicKey);
+        if (data.publicKey) updateAddress(data.publicKey);
       })
       .catch(() => {});
-  }, []);
+  }, [updateAddress]);
 
   const connect = useCallback(async () => {
     setConnecting(true);
     try {
       const { address: connectedAddress } = await StellarWalletsKit.authModal();
-      setAddress(connectedAddress);
+      updateAddress(connectedAddress);
       return connectedAddress;
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [updateAddress]);
 
   const disconnect = useCallback(async () => {
     await StellarWalletsKit.disconnect();
-    setAddress(null);
-  }, []);
+    updateAddress(null);
+  }, [updateAddress]);
 
   const signTransaction = useCallback(
     async (xdr: string) => {
-      if (!address) throw new Error("No wallet connected");
+      const currentAddress = addressRef.current;
+      if (!currentAddress) throw new Error("No wallet connected");
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
-        address,
+        address: currentAddress,
         networkPassphrase: networkToKitNetwork(network),
       });
       return signedTxXdr;
     },
-    [address, network]
+    [network]
   );
 
   const signMessage = useCallback(
     async (message: string) => {
-      if (!address) throw new Error("No wallet connected");
+      const currentAddress = addressRef.current;
+      if (!currentAddress) throw new Error("No wallet connected");
       const { signedMessage } = await StellarWalletsKit.signMessage(message, {
-        address,
+        address: currentAddress,
         networkPassphrase: networkToKitNetwork(network),
       });
       return signedMessage;
     },
-    [address, network]
+    [network]
   );
 
   const value = useMemo(
