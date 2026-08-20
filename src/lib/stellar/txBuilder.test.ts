@@ -39,7 +39,7 @@ describe("buildPaymentChunks", () => {
     expect(chunks[0].operationCount).toBe(MAX_OPS_PER_TX);
   });
 
-  it("splits 101 recipients into two chunks, reserving one op in the first for the preAuthTx chain", () => {
+  it("splits 101 recipients into a master tx plus two full payment chunks", () => {
     const source = new Account(Keypair.random().publicKey(), "100");
     const chunks = buildPaymentChunks({
       network: "TESTNET",
@@ -47,13 +47,16 @@ describe("buildPaymentChunks", () => {
       asset: null,
       recipients: randomRecipients(MAX_OPS_PER_TX + 1),
     });
-    expect(chunks).toHaveLength(2);
-    // 99 payments + 1 reserved slot for the chaining SetOptions op.
-    expect(chunks[0].operationCount).toBe(99);
-    expect(chunks[1].operationCount).toBe(2);
+    expect(chunks).toHaveLength(3);
+    // Master tx: one SetOptions op per payment chunk.
+    expect(chunks[0].operationCount).toBe(2);
+    expect(chunks[0].items).toEqual([]);
+    // Payment chunks use the full 100-op budget — nothing reserved.
+    expect(chunks[1].operationCount).toBe(100);
+    expect(chunks[2].operationCount).toBe(1);
   });
 
-  it("only the first chunk of a multi-chunk batch requires a signature", () => {
+  it("only the master tx of a multi-chunk batch requires a signature", () => {
     const source = new Account(Keypair.random().publicKey(), "100");
     const chunks = buildPaymentChunks({
       network: "TESTNET",
@@ -61,34 +64,40 @@ describe("buildPaymentChunks", () => {
       asset: null,
       recipients: randomRecipients(120),
     });
-    expect(chunks).toHaveLength(2);
+    expect(chunks).toHaveLength(3);
     expect(chunks[0].requiresSignature).toBe(true);
     expect(chunks[1].requiresSignature).toBe(false);
+    expect(chunks[2].requiresSignature).toBe(false);
   });
 
-  it("chains chunks via a preAuthTx signer whose hash matches the next chunk's transaction hash", () => {
+  it("master tx installs a preAuthTx signer per payment chunk, matching each chunk's own hash", () => {
     const source = new Account(Keypair.random().publicKey(), "100");
     const chunks = buildPaymentChunks({
       network: "TESTNET",
       sourceAccount: source,
       asset: null,
-      recipients: randomRecipients(120),
+      recipients: randomRecipients(220),
     });
-    const firstTx = TransactionBuilder.fromXDR(chunks[0].xdr, PASSPHRASE) as Transaction;
-    const secondTx = TransactionBuilder.fromXDR(chunks[1].xdr, PASSPHRASE) as Transaction;
+    expect(chunks).toHaveLength(4); // master + 3 payment chunks (100 + 100 + 20)
 
-    const setOptionsOp = firstTx.operations[firstTx.operations.length - 1];
-    expect(setOptionsOp.type).toBe("setOptions");
-    const signer = (setOptionsOp as Operation.SetOptions).signer;
-    if (!signer || !("preAuthTx" in signer)) throw new Error("expected a preAuthTx signer");
-    expect(signer.preAuthTx.toString("hex")).toBe(secondTx.hash().toString("hex"));
-    expect(signer.weight).toBe(1);
+    const masterTx = TransactionBuilder.fromXDR(chunks[0].xdr, PASSPHRASE) as Transaction;
+    expect(masterTx.operations).toHaveLength(3);
 
-    // The last chunk has no chaining op — every operation is a real payment.
-    expect(secondTx.operations.every((op) => op.type === "payment")).toBe(true);
+    chunks.slice(1).forEach((paymentChunk, i) => {
+      const paymentTx = TransactionBuilder.fromXDR(paymentChunk.xdr, PASSPHRASE) as Transaction;
+      // Every op in a payment chunk is a real payment — no chaining op mixed in.
+      expect(paymentTx.operations.every((op) => op.type === "payment")).toBe(true);
+
+      const setOptionsOp = masterTx.operations[i];
+      expect(setOptionsOp.type).toBe("setOptions");
+      const signer = (setOptionsOp as Operation.SetOptions).signer;
+      if (!signer || !("preAuthTx" in signer)) throw new Error("expected a preAuthTx signer");
+      expect(signer.preAuthTx.toString("hex")).toBe(paymentTx.hash().toString("hex"));
+      expect(signer.weight).toBe(1);
+    });
   });
 
-  it("assigns strictly increasing sequence numbers across chunks, one per tx", () => {
+  it("assigns strictly increasing sequence numbers across chunks, master first", () => {
     const source = new Account(Keypair.random().publicKey(), "1000");
     const chunks = buildPaymentChunks({
       network: "TESTNET",
@@ -99,7 +108,7 @@ describe("buildPaymentChunks", () => {
     const seqNums = chunks.map(
       (c) => (TransactionBuilder.fromXDR(c.xdr, PASSPHRASE) as Transaction).sequence
     );
-    expect(seqNums).toEqual(["1001", "1002"]);
+    expect(seqNums).toEqual(["1001", "1002", "1003"]);
   });
 
   it("uses createAccount for recipients flagged needsCreateAccount, payment otherwise", () => {

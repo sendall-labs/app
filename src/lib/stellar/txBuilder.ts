@@ -33,22 +33,9 @@ export type TxChunk = {
   requiresSignature: boolean;
 };
 
-/**
- * Splits into groups sized for chaining: every group but the last is
- * capped at MAX_OPS_PER_TX - 1 so its transaction has room for one more
- * operation — the SetOptions op that installs the next chunk's hash as a
- * preAuthTx signer. The last group can use the full MAX_OPS_PER_TX since
- * nothing needs to be chained after it.
- */
-function chunkForChaining<T>(items: T[]): T[][] {
+function chunkArray<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  let i = 0;
-  while (i < items.length) {
-    const remaining = items.length - i;
-    const size = remaining > MAX_OPS_PER_TX ? MAX_OPS_PER_TX - 1 : remaining;
-    out.push(items.slice(i, i + size));
-    i += size;
-  }
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
 
@@ -63,6 +50,46 @@ function createAccountDestination(destination: string): string {
   return MuxedAccount.fromAddress(destination, "0").baseAccount().accountId();
 }
 
+function buildPaymentTx(params: {
+  passphrase: string;
+  sourcePublicKey: string;
+  seedSequence: string;
+  fee: string;
+  asset: Asset | null;
+  group: ChunkRecipient[];
+}) {
+  const { passphrase, sourcePublicKey, seedSequence, fee, asset, group } = params;
+  const chunkAccount = new Account(sourcePublicKey, seedSequence);
+  const builder = new TransactionBuilder(chunkAccount, {
+    fee,
+    networkPassphrase: passphrase,
+  }).setTimeout(TX_TIMEOUT_SECONDS);
+
+  const items: { recipientId: string; operationIndex: number }[] = [];
+
+  group.forEach((r, operationIndex) => {
+    if (!asset && r.needsCreateAccount) {
+      builder.addOperation(
+        Operation.createAccount({
+          destination: createAccountDestination(r.destination),
+          startingBalance: r.amount,
+        })
+      );
+    } else {
+      builder.addOperation(
+        Operation.payment({
+          destination: r.destination,
+          asset: asset ?? Asset.native(),
+          amount: r.amount,
+        })
+      );
+    }
+    items.push({ recipientId: r.recipientId, operationIndex });
+  });
+
+  return { tx: builder.build(), items };
+}
+
 /**
  * Builds signable transaction XDRs for a batch of payments, chunked to
  * respect the 100-operation-per-transaction limit. `sourceAccount` must
@@ -72,16 +99,17 @@ function createAccountDestination(destination: string): string {
  * chunks once this returns, so chunks must be submitted in the same
  * order they were built.
  *
- * When there's more than one chunk, only the first needs a wallet
- * signature: every chunk but the last carries an extra SetOptions op
- * that installs the *next* chunk's transaction hash as a preAuthTx
- * signer on the source account. Once a signed chunk lands on-chain,
- * that signer authorizes the next chunk by itself (and the protocol
- * removes it automatically once used) — so the caller only has to
- * prompt the wallet once and can submit the rest unsigned, in order.
- * Built back-to-front since each chunk's SetOptions op needs the hash
- * of the chunk that follows it, which only exists once that later
- * chunk's transaction has been built.
+ * A single chunk (<= 100 recipients) is just a normal signed payment
+ * tx. Beyond that, only one signature is ever requested: instead of
+ * each payment chunk asking the wallet to review 100 real payments
+ * (slow — wallets run destination/malicious-transaction checks on
+ * every operation), a small "master" tx is built first containing
+ * *only* SetOptions ops — one per payment chunk, each installing that
+ * chunk's transaction hash as a preAuthTx signer. The master tx is the
+ * one thing the wallet ever signs; every payment chunk is authorized
+ * directly by it (not by the chunk before it) and submitted unsigned,
+ * in sequence order. The protocol removes each preAuthTx signer once
+ * its matching chunk lands, so there's no cleanup.
  */
 export function buildPaymentChunks(params: {
   network: Network;
@@ -92,63 +120,74 @@ export function buildPaymentChunks(params: {
 }): TxChunk[] {
   const { network, sourceAccount, asset, recipients, baseFeeStroops } = params;
   const passphrase = getNetworkPassphrase(network);
-  const groups = chunkForChaining(recipients);
+  const fee = baseFeeStroops ?? BASE_FEE;
+  const groups = chunkArray(recipients, MAX_OPS_PER_TX);
   const baseSeq = BigInt(sourceAccount.sequenceNumber());
+  const sourcePublicKey = sourceAccount.accountId();
 
-  let nextChunkHash: Buffer | null = null;
-  const chunks: TxChunk[] = [];
-
-  for (let chunkIndex = groups.length - 1; chunkIndex >= 0; chunkIndex--) {
-    const group = groups[chunkIndex];
-    const isLast = chunkIndex === groups.length - 1;
-    // A standalone Account per chunk (seeded at that chunk's own prior
-    // sequence number) instead of the shared, mutating sourceAccount —
-    // building back-to-front means chunks aren't built in sequence order.
-    const chunkAccount = new Account(sourceAccount.accountId(), (baseSeq + BigInt(chunkIndex)).toString());
-    const builder = new TransactionBuilder(chunkAccount, {
-      fee: baseFeeStroops ?? BASE_FEE,
-      networkPassphrase: passphrase,
-    }).setTimeout(TX_TIMEOUT_SECONDS);
-
-    const items: { recipientId: string; operationIndex: number }[] = [];
-
-    group.forEach((r, operationIndex) => {
-      if (!asset && r.needsCreateAccount) {
-        builder.addOperation(
-          Operation.createAccount({
-            destination: createAccountDestination(r.destination),
-            startingBalance: r.amount,
-          })
-        );
-      } else {
-        builder.addOperation(
-          Operation.payment({
-            destination: r.destination,
-            asset: asset ?? Asset.native(),
-            amount: r.amount,
-          })
-        );
-      }
-      items.push({ recipientId: r.recipientId, operationIndex });
+  if (groups.length <= 1) {
+    const { tx, items } = buildPaymentTx({
+      passphrase,
+      sourcePublicKey,
+      seedSequence: baseSeq.toString(),
+      fee,
+      asset,
+      group: groups[0] ?? [],
     });
-
-    if (!isLast && nextChunkHash) {
-      builder.addOperation(Operation.setOptions({ signer: { preAuthTx: nextChunkHash, weight: 1 } }));
-    }
-
-    const tx = builder.build();
-    nextChunkHash = tx.hash();
-
-    chunks[chunkIndex] = {
-      chunkIndex,
-      xdr: tx.toXDR(),
-      operationCount: group.length,
-      items,
-      requiresSignature: chunkIndex === 0,
-    };
+    sourceAccount.incrementSequenceNumber();
+    return [
+      {
+        chunkIndex: 0,
+        xdr: tx.toXDR(),
+        operationCount: groups[0]?.length ?? 0,
+        items,
+        requiresSignature: true,
+      },
+    ];
   }
 
-  for (let i = 0; i < groups.length; i++) sourceAccount.incrementSequenceNumber();
+  // Payment chunks don't depend on each other, so build order doesn't
+  // matter — each just needs its own sequence number, offset by one to
+  // leave room for the master tx at baseSeq + 1.
+  const paymentChunks = groups.map((group, i) =>
+    buildPaymentTx({
+      passphrase,
+      sourcePublicKey,
+      seedSequence: (baseSeq + BigInt(i + 1)).toString(),
+      fee,
+      asset,
+      group,
+    })
+  );
+
+  const masterAccount = new Account(sourcePublicKey, baseSeq.toString());
+  const masterBuilder = new TransactionBuilder(masterAccount, {
+    fee,
+    networkPassphrase: passphrase,
+  }).setTimeout(TX_TIMEOUT_SECONDS);
+  for (const { tx } of paymentChunks) {
+    masterBuilder.addOperation(Operation.setOptions({ signer: { preAuthTx: tx.hash(), weight: 1 } }));
+  }
+  const masterTx = masterBuilder.build();
+
+  const chunks: TxChunk[] = [
+    {
+      chunkIndex: 0,
+      xdr: masterTx.toXDR(),
+      operationCount: paymentChunks.length,
+      items: [],
+      requiresSignature: true,
+    },
+    ...paymentChunks.map(({ tx, items }, i) => ({
+      chunkIndex: i + 1,
+      xdr: tx.toXDR(),
+      operationCount: groups[i].length,
+      items,
+      requiresSignature: false,
+    })),
+  ];
+
+  for (let i = 0; i < chunks.length; i++) sourceAccount.incrementSequenceNumber();
 
   return chunks;
 }
