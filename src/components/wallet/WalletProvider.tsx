@@ -51,6 +51,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setConnecting(true);
     try {
+      try {
+        // A wallet module may already be selected from earlier this session —
+        // re-fetch its address straight from the wallet (no picker popup)
+        // instead of trusting our possibly-stale cache, since the user may
+        // have switched accounts in the extension since we last checked.
+        const { address: liveAddress } = await StellarWalletsKit.fetchAddress();
+        updateAddress(liveAddress);
+        return liveAddress;
+      } catch {
+        // No wallet selected yet — fall through to the picker below.
+      }
       const { address: connectedAddress } = await StellarWalletsKit.authModal();
       updateAddress(connectedAddress);
       return connectedAddress;

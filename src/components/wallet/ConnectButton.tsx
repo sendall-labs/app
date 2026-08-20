@@ -9,7 +9,7 @@ function truncate(address: string): string {
 }
 
 export function ConnectButton() {
-  const { address, connect, signMessage } = useWallet();
+  const { connect, signMessage } = useWallet();
   const [session, setSession] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -23,7 +23,7 @@ export function ConnectButton() {
   const handleLogin = useCallback(async () => {
     setLoading(true);
     try {
-      const publicKey = address ?? (await connect());
+      const publicKey = await connect();
 
       const challengeRes = await fetch("/api/auth/challenge", {
         method: "POST",
@@ -52,7 +52,7 @@ export function ConnectButton() {
     } finally {
       setLoading(false);
     }
-  }, [address, connect, signMessage]);
+  }, [connect, signMessage]);
 
   const handleLogout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST" });
