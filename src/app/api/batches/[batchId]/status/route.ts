@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
-import { getSessionPublicKey } from "@/lib/auth/requireSession";
+import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ batchId: string }> }
 ) {
-  const publicKey = await getSessionPublicKey();
-  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const access = await resolveBatchAccess();
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
-    where: { id: batchId, ownerPublicKey: publicKey },
+    where: { id: batchId, ...batchAccessWhere(access) },
     select: {
       id: true,
       status: true,

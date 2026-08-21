@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { Asset } from "@stellar/stellar-sdk";
-import { getSessionPublicKey } from "@/lib/auth/requireSession";
+import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 import { checkRecipients } from "@/lib/stellar/balanceCheck";
 import type { Network } from "@/generated/prisma/enums";
@@ -20,8 +20,7 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ batchId: string }> }
 ) {
-  const publicKey = await getSessionPublicKey();
-  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const access = await resolveBatchAccess();
 
   const bodyJson = await request.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(bodyJson);
@@ -32,7 +31,7 @@ export async function POST(
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
-    where: { id: batchId, ownerPublicKey: publicKey },
+    where: { id: batchId, ...batchAccessWhere(access) },
     include: { recipients: true },
   });
   if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });

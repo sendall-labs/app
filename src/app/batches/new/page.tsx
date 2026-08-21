@@ -5,22 +5,25 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { CSV_HEADER } from "@/components/batches/RecipientsEditor";
-import { ConnectButton } from "@/components/wallet/ConnectButton";
 
 /**
  * Not a form of its own — creates an empty batch and hands off to its
  * Prepare tab immediately, so "New batch" opens the real Prepare screen
  * (same page, same autosave, same everything) instead of a lookalike
  * pre-creation form that only pretended to be it.
+ *
+ * Creation itself needs no wallet — the batch is drafted anonymously and
+ * only claimed by a connected wallet right before the first signature is
+ * requested (see prepareAndSend in [batchId]/page.tsx).
  */
 export default function NewBatchPage() {
   const router = useRouter();
-  const { network, address } = useWallet();
+  const { network } = useWallet();
   const [error, setError] = useState<string | null>(null);
   const createdRef = useRef(false);
 
   useEffect(() => {
-    if (!address || createdRef.current) return;
+    if (createdRef.current) return;
     createdRef.current = true;
 
     (async () => {
@@ -28,7 +31,7 @@ export default function NewBatchPage() {
         const res = await fetch("/api/batches", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ csvText: CSV_HEADER, network, sourceAccount: address }),
+          body: JSON.stringify({ csvText: CSV_HEADER, network }),
         });
         if (!res.ok) throw new Error((await res.json()).error ?? "Failed to create batch");
         const { batch } = await res.json();
@@ -40,16 +43,7 @@ export default function NewBatchPage() {
         toast.error(message);
       }
     })();
-  }, [address, network, router]);
-
-  if (!address) {
-    return (
-      <div className="flex flex-col items-center gap-4 py-16 text-center">
-        <p className="text-sm text-ink-muted">Connect and sign in with your wallet to start a new batch.</p>
-        <ConnectButton />
-      </div>
-    );
-  }
+  }, [network, router]);
 
   if (error) {
     return (

@@ -31,7 +31,7 @@ type Batch = {
   network: string;
   assetCode: string | null;
   assetIssuer: string | null;
-  sourceAccount: string;
+  sourceAccount: string | null;
   csvFileName: string | null;
   createdAt: string;
   recipients: Recipient[];
@@ -255,7 +255,7 @@ function ExternalLinkIcon() {
 
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
-  const { signTransaction } = useWallet();
+  const { login, signTransaction } = useWallet();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
   const [busyRowIds, setBusyRowIds] = useState<Set<string>>(new Set());
@@ -572,9 +572,26 @@ export default function BatchReviewPage() {
     );
   }, []);
 
+  // A batch drafted without a wallet has no `sourceAccount` yet — claim it
+  // right here, at the last possible moment before a signature is needed,
+  // instead of gating the whole page on a wallet. Try the claim first (a
+  // session may already exist from earlier in this browser); only run the
+  // full wallet login — which pops the signature prompt — if that 401s.
+  const ensureClaimed = useCallback(async () => {
+    const claim = () => fetch(`/api/batches/${batchId}/claim`, { method: "POST" });
+
+    let res = await claim();
+    if (res.status === 401) {
+      await login();
+      res = await claim();
+    }
+    if (!res.ok) throw new Error((await res.json()).error ?? "Couldn't claim this batch");
+  }, [batchId, login]);
+
   const prepareAndSend = useCallback(async () => {
     setBulkBusy("send");
     try {
+      await ensureClaimed();
       const prepareRes = await fetch(`/api/batches/${batchId}/prepare`, { method: "POST" });
       if (!prepareRes.ok) throw new Error((await prepareRes.json()).error ?? "Prepare failed");
       const { attempts } = await prepareRes.json();
@@ -600,11 +617,12 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction]);
+  }, [batchId, load, signTransaction, ensureClaimed]);
 
   const retryFailed = useCallback(async () => {
     setBulkBusy("retry");
     try {
+      await ensureClaimed();
       const retryRes = await fetch(`/api/batches/${batchId}/retry`, { method: "POST" });
       if (!retryRes.ok) throw new Error((await retryRes.json()).error ?? "Retry failed");
       const { attempts } = await retryRes.json();
@@ -630,7 +648,7 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction]);
+  }, [batchId, load, signTransaction, ensureClaimed]);
 
   const refreshableCount = useMemo(() => {
     if (!batch) return 0;

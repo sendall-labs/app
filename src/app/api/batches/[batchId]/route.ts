@@ -1,18 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionPublicKey } from "@/lib/auth/requireSession";
+import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ batchId: string }> }
 ) {
-  const publicKey = await getSessionPublicKey();
-  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const access = await resolveBatchAccess();
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
-    where: { id: batchId, ownerPublicKey: publicKey },
+    where: { id: batchId, ...batchAccessWhere(access) },
     include: {
       recipients: { orderBy: { rowIndex: "asc" } },
       attempts: { orderBy: { chunkIndex: "asc" }, include: { items: true } },
@@ -40,8 +39,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ batchId: string }> }
 ) {
-  const publicKey = await getSessionPublicKey();
-  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const access = await resolveBatchAccess();
 
   const parsed = patchSchema.safeParse(await request.json());
   if (!parsed.success) {
@@ -51,7 +49,7 @@ export async function PATCH(
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
-    where: { id: batchId, ownerPublicKey: publicKey },
+    where: { id: batchId, ...batchAccessWhere(access) },
     include: { _count: { select: { attempts: true } } },
   });
   if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });

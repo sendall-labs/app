@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Playwright fixtures/config, not React code — its `test.extend`
+    // fixture functions (`use(...)`) trip the react-hooks lint rules.
+    "e2e/**",
+    "playwright.config.ts",
   ]),
 ]);
 

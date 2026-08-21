@@ -58,11 +58,20 @@ model RefreshToken {
 
 model Batch {
   id             String      @id @default(cuid())
-  ownerPublicKey String
+  // Null until a wallet claims this batch (see `claimedAt`) — batches can be
+  // drafted anonymously, scoped instead by `anonId`, before any wallet signs in.
+  ownerPublicKey String?
+  // Anonymous-session identifier a wallet-less visitor is scoped by. Set at
+  // creation when there's no authenticated session; cleared (left as-is,
+  // ownerPublicKey takes over) once claimed.
+  anonId         String?
+  claimedAt      DateTime?
   network        Network
   assetCode      String? // null = native XLM
   assetIssuer    String?
-  sourceAccount  String
+  // Null until claimed — this is the wallet that will sign, so it can't be
+  // known before a wallet connects.
+  sourceAccount  String?
   status         BatchStatus @default(DRAFT)
   csvFileName    String?
   createdAt      DateTime    @default(now())
@@ -72,6 +81,7 @@ model Batch {
   attempts   PaymentAttempt[]
 
   @@index([ownerPublicKey])
+  @@index([anonId])
 }
 
 model Recipient {
