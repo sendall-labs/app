@@ -77,3 +77,32 @@ body {
   background: var(--color-accent);
   color: var(--color-accent-ink);
 }
+
+/* Landing page signature: the dashed line "flowing" from the batch of
+   addresses into the ledger-close receipt. */
+.batch-flow-line {
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--color-accent) 0,
+    var(--color-accent) 8px,
+    transparent 8px,
+    transparent 20px
+  );
+  background-size: 40px 100%;
+  animation: batch-flow 1.4s linear infinite;
+}
+
+@keyframes batch-flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 40px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .batch-flow-line {
+    animation: none;
+  }
+}
