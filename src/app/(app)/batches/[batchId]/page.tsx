@@ -273,6 +273,14 @@ export default function BatchReviewPage() {
   const [editedRows, setEditedRows] = useState<EditableRow[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [bulkAmount, setBulkAmount] = useState("");
+  const nextBtnRef = useRef<HTMLButtonElement>(null);
+  const signSendBtnRef = useRef<HTMLButtonElement>(null);
+  const [demoAnchor, setDemoAnchor] = useState<{
+    top: number;
+    left: number;
+    placement: "above" | "below";
+    arrowLeft: number;
+  } | null>(null);
   const [pinnedStage, setPinnedStage] = useState<Stage | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRowsRef = useRef<EditableRow[]>([]);
@@ -658,6 +666,40 @@ export default function BatchReviewPage() {
     ).length;
   }, [batch]);
 
+  useEffect(() => {
+    const stage = batch ? (pinnedStage ?? stageFromStatus(batch.status)) : null;
+    const highlightNext = isDemo && stage === "prepare";
+    const highlightSignSend = isDemo && stage === "confirm";
+    const targetRef = highlightNext ? nextBtnRef : highlightSignSend ? signSendBtnRef : null;
+    const target = targetRef?.current;
+    if (!target) {
+      setDemoAnchor(null);
+      return;
+    }
+    const update = () => {
+      const rect = target.getBoundingClientRect();
+      const cardWidth = 288;
+      const gap = 12;
+      // Prefer placing above the target; flip below when there isn't room
+      // (e.g. the Next button near the bottom of a short viewport).
+      const placement: "above" | "below" = rect.top > 180 ? "above" : "below";
+      const left = Math.min(
+        Math.max(rect.left + rect.width / 2 - cardWidth / 2, 16),
+        window.innerWidth - cardWidth - 16,
+      );
+      const top = placement === "above" ? rect.top - gap : rect.bottom + gap;
+      const arrowLeft = Math.min(Math.max(rect.left + rect.width / 2 - left, 20), cardWidth - 20);
+      setDemoAnchor({ top, left, placement, arrowLeft });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [isDemo, batch, pinnedStage]);
+
   if (!batch) return <p className="text-sm text-ink-muted">Loading…</p>;
 
   const readyCount = batch.recipients.filter((r) => r.status === "READY").length;
@@ -702,10 +744,28 @@ export default function BatchReviewPage() {
   return (
     <div className="flex flex-col gap-6">
       {isDemo && (
-        // Anchored under the header rather than the page bottom — the
-        // bottom Back/Next bar lives there too, and on narrow viewports a
-        // bottom-fixed card sits right on top of it.
-        <div className="fixed top-20 right-4 z-50 max-w-xs rounded-lg border border-accent bg-surface p-4 shadow-lg sm:right-6">
+        <div
+          className="fixed z-50 w-72 rounded-lg border border-accent bg-surface p-4 shadow-lg"
+          style={
+            demoAnchor
+              ? {
+                  top: demoAnchor.top,
+                  left: demoAnchor.left,
+                  transform: demoAnchor.placement === "above" ? "translateY(-100%)" : undefined,
+                }
+              : { top: 80, right: 16 }
+          }
+        >
+          {demoAnchor && (
+            <div
+              className={`absolute h-3 w-3 rotate-45 border-accent bg-surface ${
+                demoAnchor.placement === "above"
+                  ? "bottom-[-7px] border-r border-b"
+                  : "top-[-7px] border-l border-t"
+              }`}
+              style={{ left: demoAnchor.arrowLeft - 6 }}
+            />
+          )}
           <p className="text-xs font-medium tracking-wide text-accent uppercase">
             Demo · Step {demoStepNumber} of 3
           </p>
@@ -805,6 +865,7 @@ export default function BatchReviewPage() {
               )}
               {readyCount > 0 && (
                 <button
+                  ref={signSendBtnRef}
                   onClick={prepareAndSend}
                   disabled={anyBusy}
                   className={`cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -877,6 +938,7 @@ export default function BatchReviewPage() {
           ← Back
         </button>
         <button
+          ref={nextBtnRef}
           onClick={() => setPinnedStage(STAGES[stageIndex + 1].key)}
           disabled={stageIndex === STAGES.length - 1}
           className={`cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40 ${
