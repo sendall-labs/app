@@ -136,6 +136,7 @@ export const test = base.extend<WalletFixtures>({
   context: async ({}, use) => {
     const context = await chromium.launchPersistentContext(WALLET_PROFILE_DIR, {
       headless: false,
+      colorScheme: "dark",
       args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
     });
 
