@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
@@ -255,6 +255,7 @@ function ExternalLinkIcon() {
 
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
+  const isDemo = useSearchParams().get("demo") === "1";
   const { login, signTransaction } = useWallet();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
@@ -688,6 +689,13 @@ export default function BatchReviewPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {isDemo && (
+        <div className="rounded-lg border border-hairline bg-surface px-4 py-3 text-sm text-ink">
+          <span className="font-medium text-accent">Demo.</span> This batch is pre-filled with
+          funded testnet addresses — the rest is the real flow. Connect your wallet at{" "}
+          <span className="font-medium">Send</span> to sign and submit for real.
+        </div>
+      )}
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
