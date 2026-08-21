@@ -1,4 +1,4 @@
-import { Networks, rpc } from "@stellar/stellar-sdk";
+import { Horizon, Networks, rpc } from "@stellar/stellar-sdk";
 import type { Network } from "@/generated/prisma/enums";
 
 // SDF only runs a free public RPC for Testnet. Mainnet has no single
@@ -38,4 +38,12 @@ export function getRpcServer(network: Network): rpc.Server {
 
 export function getNetworkPassphrase(network: Network): string {
   return NETWORK_CONFIG[network].passphrase;
+}
+
+// RPC has no "list every trustline this account holds" call — the Horizon
+// account endpoint is the one place that returns the full `balances[]`
+// array (native XLM plus every issued asset), which is what a dashboard
+// needs.
+export function getHorizonServer(network: Network): Horizon.Server {
+  return new Horizon.Server(NETWORK_CONFIG[network].horizonUrl);
 }
