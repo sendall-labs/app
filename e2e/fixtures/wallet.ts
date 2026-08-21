@@ -137,18 +137,48 @@ export const test = base.extend<WalletFixtures>({
     const context = await chromium.launchPersistentContext(WALLET_PROFILE_DIR, {
       headless: false,
       colorScheme: "dark",
-      args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
+      // Fixed, not null — a null viewport makes every tab (including
+      // Freighter's own fullscreen-mode page) inherit the actual OS window
+      // size, which reflows Freighter's layout unpredictably. The window
+      // itself is still maximized via --start-maximized below.
+      viewport: { width: 1280, height: 800 },
+      args: [
+        `--disable-extensions-except=${EXTENSION_PATH}`,
+        `--load-extension=${EXTENSION_PATH}`,
+        "--start-maximized",
+        // Belt and suspenders against the "restore pages?" prompt — the
+        // real fix is always closing cleanly (see the try/finally below),
+        // but this suppresses it even if a previous run didn't.
+        "--disable-session-crashed-bubble",
+        "--disable-translate",
+      ],
     });
 
     let sw = context.serviceWorkers()[0];
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
 
+    // Freighter auto-opens its own tab on browser startup, plus Chromium's
+    // default blank tab — unlock the Freighter one (so it's ready for
+    // later approvals that reuse an existing unlocked session) then close
+    // all but one, so a human watching sees a single tab, not three.
+    // (Closing every page can take the whole headful browser process down
+    // with it, so one is always left alive.)
     for (const page of context.pages()) {
       if (page.url().startsWith("chrome-extension://")) await unlockIfNeeded(page);
     }
+    const extraPages = context.pages().slice(1);
+    for (const page of extraPages) {
+      await page.close().catch(() => {});
+    }
 
-    await use(context);
-    await context.close();
+    try {
+      await use(context);
+    } finally {
+      // Always close, even if the test throws — an uncleanly-killed
+      // Chromium process leaves the profile in a "didn't shut down
+      // properly" state that shows a restore prompt on the next launch.
+      await context.close();
+    }
   },
   extensionId: async ({ context }, use) => {
     let sw = context.serviceWorkers()[0];
