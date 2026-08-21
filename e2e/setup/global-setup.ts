@@ -36,48 +36,63 @@ export default async function globalSetup(): Promise<void> {
 
   const context = await chromium.launchPersistentContext(WALLET_PROFILE_DIR, {
     headless: false,
-    args: [`--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`],
+    // Fixed (not null) so pixel-coordinate clicks below stay deterministic
+    // regardless of the actual OS window size — Freighter's own fullscreen
+    // layout reflows at different viewport widths, and null viewport makes
+    // every tab inherit the (maximized) window size instead of this.
+    viewport: { width: 1280, height: 800 },
+    args: [
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
+      "--start-maximized",
+      "--disable-session-crashed-bubble",
+      "--disable-translate",
+    ],
   });
 
-  let sw = context.serviceWorkers()[0];
-  if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
-  const extId = sw.url().split("/")[2];
+  try {
+    let sw = context.serviceWorkers()[0];
+    if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
+    const extId = sw.url().split("/")[2];
 
-  const page = await context.newPage();
-  await page.goto(`chrome-extension://${extId}/index.html#/recover-account`);
-  await page.waitForTimeout(500);
-  await page.locator('input[placeholder="New password"]').fill(PASSWORD);
-  await page.locator('input[placeholder="Confirm password"]').fill(PASSWORD);
-  await page.getByTestId("account-creator-termsOfUse-input").check({ force: true });
-  await page.getByTestId("account-creator-submit").click();
-  await page.waitForTimeout(1000);
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extId}/index.html#/recover-account`);
+    await page.waitForTimeout(500);
+    await page.locator('input[placeholder="New password"]').fill(PASSWORD);
+    await page.locator('input[placeholder="Confirm password"]').fill(PASSWORD);
+    await page.getByTestId("account-creator-termsOfUse-input").check({ force: true });
+    await page.getByTestId("account-creator-submit").click();
+    await page.waitForTimeout(1000);
 
-  const words = mnemonic.trim().split(/\s+/);
-  for (let i = 0; i < words.length; i++) {
-    await page.locator(`#MnemonicPhrase-${i + 1}`).fill(words[i]);
+    const words = mnemonic.trim().split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      await page.locator(`#MnemonicPhrase-${i + 1}`).fill(words[i]);
+    }
+    await page.getByRole("button", { name: "Import" }).click();
+    // The import screen's own success transition is unreliable to wait on —
+    // closing and reopening the extension page reliably lands on the
+    // unlock/account screen once the import has actually completed.
+    await page.waitForTimeout(2500);
+    await page.close();
+
+    const page2 = await context.newPage();
+    await page2.goto(`chrome-extension://${extId}/index.html`);
+    await page2.waitForTimeout(1000);
+    const pwField = page2.locator('input[placeholder="Enter password"]');
+    if (await pwField.isVisible().catch(() => false)) {
+      await pwField.fill(PASSWORD);
+      await page2.getByRole("button", { name: "Unlock" }).click();
+      await page2.waitForTimeout(1200);
+    }
+
+    // Switch to Testnet (the network globe icon, top-left).
+    await page2.mouse.click(337, 40);
+    await page2.waitForTimeout(500);
+    await page2.getByText("Testnet", { exact: true }).click();
+    await page2.waitForTimeout(1000);
+  } finally {
+    // Always close cleanly — an uncleanly-killed profile shows a "restore
+    // pages?" prompt on every later launch until a clean close resets it.
+    await context.close();
   }
-  await page.getByRole("button", { name: "Import" }).click();
-  // The import screen's own success transition is unreliable to wait on —
-  // closing and reopening the extension page reliably lands on the
-  // unlock/account screen once the import has actually completed.
-  await page.waitForTimeout(2500);
-  await page.close();
-
-  const page2 = await context.newPage();
-  await page2.goto(`chrome-extension://${extId}/index.html`);
-  await page2.waitForTimeout(1000);
-  const pwField = page2.locator('input[placeholder="Enter password"]');
-  if (await pwField.isVisible().catch(() => false)) {
-    await pwField.fill(PASSWORD);
-    await page2.getByRole("button", { name: "Unlock" }).click();
-    await page2.waitForTimeout(1200);
-  }
-
-  // Switch to Testnet (the network globe icon, top-left).
-  await page2.mouse.click(337, 40);
-  await page2.waitForTimeout(500);
-  await page2.getByText("Testnet", { exact: true }).click();
-  await page2.waitForTimeout(1000);
-
-  await context.close();
 }

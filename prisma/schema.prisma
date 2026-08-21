@@ -149,3 +149,32 @@ model PaymentAttemptItem {
   @@index([attemptId])
   @@index([recipientId])
 }
+
+// Always owned by an authenticated wallet — unlike Batch, there's no
+// anon/claim flow here, so ownerPublicKey is required from creation.
+model AddressList {
+  id             String   @id @default(cuid())
+  ownerPublicKey String
+  name           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  entries AddressListEntry[]
+
+  @@index([ownerPublicKey])
+}
+
+model AddressListEntry {
+  id      String      @id @default(cuid())
+  listId  String
+  list    AddressList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  rowIndex     Int
+  name         String
+  address      String
+  addressValid Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([listId])
+}
