@@ -687,13 +687,29 @@ export default function BatchReviewPage() {
     ? [...confirmRows, { id: `new-blank-${confirmRows.length}`, destination: "", amount: "", memo: null }]
     : confirmRows;
 
+  const demoStepNumber = displayedStage === "prepare" ? 1 : displayedStage === "confirm" ? 2 : 3;
+  const demoStepText =
+    displayedStage === "prepare"
+      ? "Review the pre-filled recipients, then click Next → below."
+      : displayedStage === "confirm"
+        ? "Click Sign & send — that's where your wallet connects and this becomes a real testnet transaction."
+        : batch.attempts.length === 0
+          ? "Head back to Confirm and click Sign & send to submit."
+          : "Done — that was a real testnet transaction. Check the tx link on any recipient below.";
+  const demoHighlightNext = isDemo && displayedStage === "prepare";
+  const demoHighlightSignSend = isDemo && displayedStage === "confirm";
+
   return (
     <div className="flex flex-col gap-6">
       {isDemo && (
-        <div className="rounded-lg border border-hairline bg-surface px-4 py-3 text-sm text-ink">
-          <span className="font-medium text-accent">Demo.</span> This batch is pre-filled with
-          funded testnet addresses — the rest is the real flow. Connect your wallet at{" "}
-          <span className="font-medium">Send</span> to sign and submit for real.
+        // Anchored under the header rather than the page bottom — the
+        // bottom Back/Next bar lives there too, and on narrow viewports a
+        // bottom-fixed card sits right on top of it.
+        <div className="fixed top-20 right-4 z-50 max-w-xs rounded-lg border border-accent bg-surface p-4 shadow-lg sm:right-6">
+          <p className="text-xs font-medium tracking-wide text-accent uppercase">
+            Demo · Step {demoStepNumber} of 3
+          </p>
+          <p className="mt-1 text-sm text-ink">{demoStepText}</p>
         </div>
       )}
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
@@ -791,7 +807,9 @@ export default function BatchReviewPage() {
                 <button
                   onClick={prepareAndSend}
                   disabled={anyBusy}
-                  className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 ${
+                    demoHighlightSignSend ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
+                  }`}
                 >
                   {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
                 </button>
@@ -861,7 +879,9 @@ export default function BatchReviewPage() {
         <button
           onClick={() => setPinnedStage(STAGES[stageIndex + 1].key)}
           disabled={stageIndex === STAGES.length - 1}
-          className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40"
+          className={`cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40 ${
+            demoHighlightNext ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
+          }`}
         >
           Next →
         </button>
