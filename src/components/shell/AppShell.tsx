@@ -6,8 +6,12 @@ import { useWallet } from "@/components/wallet/WalletProvider";
 import { ConnectButton } from "@/components/wallet/ConnectButton";
 
 const NAV_ITEMS = [
-  { href: "/batches", label: "Batches" },
+  { href: "/home", label: "Home" },
   { href: "/batches/new", label: "New batch" },
+  { href: "/batches", label: "Batches" },
+  { href: "/address-lists", label: "Address Lists" },
+  { href: "/check-balance", label: "Check Balance" },
+  { href: "/demo", label: "Demo" },
 ];
 
 function truncate(address: string): string {
@@ -27,7 +31,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-hairline bg-sidebar px-4 py-5 md:flex">
-        <Link href="/batches" className="px-2 py-1.5 font-serif text-lg font-semibold">
+        <Link href="/home" className="px-2 py-1.5 font-serif text-lg font-semibold">
           Sendall
         </Link>
 
@@ -65,7 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3 md:hidden">
-        <Link href="/batches" className="font-serif text-lg font-semibold">
+        <Link href="/home" className="font-serif text-lg font-semibold">
           Sendall
         </Link>
         <ConnectButton />
