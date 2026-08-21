@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Asset } from "@stellar/stellar-sdk";
-import { getSessionPublicKey } from "@/lib/auth/requireSession";
+import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 import { getRpcServer } from "@/lib/stellar/client";
 import { buildPaymentChunks } from "@/lib/stellar/txBuilder";
@@ -10,15 +10,20 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ batchId: string }> }
 ) {
-  const publicKey = await getSessionPublicKey();
-  if (!publicKey) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  const access = await resolveBatchAccess();
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
-    where: { id: batchId, ownerPublicKey: publicKey },
+    where: { id: batchId, ...batchAccessWhere(access) },
     include: { recipients: true },
   });
   if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+  if (!batch.sourceAccount) {
+    return NextResponse.json(
+      { error: "Connect a wallet to claim this batch before preparing it" },
+      { status: 409 }
+    );
+  }
 
   const readyRecipients = batch.recipients.filter((r) => r.status === "READY");
   if (readyRecipients.length === 0) {

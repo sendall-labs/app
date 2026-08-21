@@ -10,6 +10,10 @@ type WalletContextValue = {
   address: string | null;
   connecting: boolean;
   connect: () => Promise<string>;
+  // Full SIWS handshake (connect + challenge + sign + verify) — the only
+  // thing that actually establishes the `sendall_session` cookie. `connect`
+  // alone just reads the wallet's address and does not authenticate.
+  login: () => Promise<string>;
   disconnect: () => Promise<void>;
   signTransaction: (xdr: string) => Promise<string>;
   signMessage: (message: string) => Promise<string>;
@@ -70,6 +74,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [updateAddress]);
 
+  const login = useCallback(async () => {
+    const publicKey = await connect();
+
+    const challengeRes = await fetch("/api/auth/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ publicKey }),
+    });
+    if (!challengeRes.ok) throw new Error("Could not build login challenge");
+    const { message, token } = await challengeRes.json();
+
+    const { signedMessage } = await StellarWalletsKit.signMessage(message, {
+      address: publicKey,
+      networkPassphrase: networkToKitNetwork(network),
+    });
+
+    const verifyRes = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ publicKey, signedMessage, token }),
+    });
+    if (!verifyRes.ok) {
+      const { error } = await verifyRes.json();
+      throw new Error(error ?? "Login verification failed");
+    }
+    const { publicKey: verifiedKey } = await verifyRes.json();
+    updateAddress(verifiedKey);
+    return verifiedKey;
+  }, [connect, network, updateAddress]);
+
   const disconnect = useCallback(async () => {
     await StellarWalletsKit.disconnect();
     updateAddress(null);
@@ -108,11 +142,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       address,
       connecting,
       connect,
+      login,
       disconnect,
       signTransaction,
       signMessage,
     }),
-    [network, address, connecting, connect, disconnect, signTransaction, signMessage]
+    [network, address, connecting, connect, login, disconnect, signTransaction, signMessage]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

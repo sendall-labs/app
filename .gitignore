@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# e2e (playwright)
+/e2e/extensions
+/e2e/.wallet-profile
+/playwright-report
+/test-results
+
 # next.js
 /.next/
 /out/
