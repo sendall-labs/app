@@ -60,7 +60,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col gap-10">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Home</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Home</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Your wallet balances and recent batches, at a glance.
         </p>
@@ -70,38 +70,79 @@ export default function HomePage() {
         <h2 className="text-xs font-medium uppercase tracking-wide text-ink-faint">Balances</h2>
         <div className="mt-3">
           {!address ? (
-            <div className="rounded-lg border border-hairline bg-surface px-5 py-8 text-center">
+            <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-8 text-center">
               <p className="text-sm text-ink-muted">Connect your wallet to see balances.</p>
               <div className="mt-4 flex justify-center">
                 <ConnectButton />
               </div>
             </div>
           ) : balancesError ? (
-            <p className="rounded-lg border border-hairline bg-surface px-5 py-4 text-sm text-danger">
+            <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-danger">
               {balancesError}
             </p>
           ) : !balances ? (
-            <p className="rounded-lg border border-hairline bg-surface px-5 py-4 text-sm text-ink-muted">
+            <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-ink-muted">
               Loading…
             </p>
           ) : balances.length === 0 ? (
-            <p className="rounded-lg border border-hairline bg-surface px-5 py-4 text-sm text-ink-muted">
+            <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-ink-muted">
               No balances yet — this account isn&apos;t funded on{" "}
               {network === "PUBLIC" ? "the public network" : "testnet"}.
             </p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {balances.map((b) => (
-                <div
-                  key={`${b.assetCode}-${b.assetIssuer ?? "native"}`}
-                  className="rounded-lg border border-hairline bg-surface px-5 py-4"
-                >
-                  <p className="text-xs uppercase tracking-wide text-ink-faint">{b.assetCode}</p>
-                  <p className="mt-1 font-serif text-2xl font-semibold tabular-nums text-ink">
-                    {formatAmount(b.balance)}
-                  </p>
-                </div>
-              ))}
+            <div className="grid gap-3 sm:grid-cols-3">
+              {/* Primary balance (XLM if held, else whatever's first) gets the
+                  hero treatment — a flat grid of equal boxes hid which
+                  number actually matters. */}
+              {balances
+                .slice()
+                .sort((a, b) => (a.assetCode === "XLM" ? -1 : b.assetCode === "XLM" ? 1 : 0))
+                .map((b, i) => {
+                  const key = `${b.assetCode}-${b.assetIssuer ?? "native"}`;
+                  if (i === 0) {
+                    return (
+                      <div
+                        key={key}
+                        className="relative overflow-hidden rounded-2xl border border-hairline bg-surface px-6 py-6 shadow-sm sm:col-span-3"
+                      >
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 opacity-[0.08]"
+                          style={{
+                            backgroundImage:
+                              "radial-gradient(circle at 85% 20%, var(--color-accent-2), transparent 60%), radial-gradient(circle at 10% 90%, var(--color-accent), transparent 55%)",
+                          }}
+                        />
+                        <div className="relative flex items-center justify-between gap-4">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="accent-gradient flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white">
+                                {b.assetCode.slice(0, 1)}
+                              </span>
+                              <p className="text-xs uppercase tracking-wide text-ink-faint">
+                                {b.assetCode} · {network === "PUBLIC" ? "Public" : "Testnet"}
+                              </p>
+                            </div>
+                            <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-ink">
+                              {formatAmount(b.balance)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={key}
+                      className="rounded-2xl border border-hairline bg-surface px-5 py-4 shadow-sm transition-shadow hover:shadow-md"
+                    >
+                      <p className="text-xs uppercase tracking-wide text-ink-faint">{b.assetCode}</p>
+                      <p className="mt-1 text-xl font-bold tracking-tight tabular-nums text-ink">
+                        {formatAmount(b.balance)}
+                      </p>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>
@@ -114,7 +155,7 @@ export default function HomePage() {
             View all
           </Link>
         </div>
-        <div className="mt-3 rounded-lg border border-hairline bg-surface">
+        <div className="mt-3 rounded-2xl border border-hairline bg-surface shadow-sm">
           {!batches ? (
             <p className="px-5 py-8 text-sm text-ink-muted">Loading…</p>
           ) : recentBatches.length === 0 ? (
@@ -131,12 +172,12 @@ export default function HomePage() {
                 <li key={b.id}>
                   <Link
                     href={`/batches/${b.id}`}
-                    className="flex items-center justify-between px-5 py-3 hover:bg-sidebar"
+                    className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-sidebar"
                   >
                     <span className="font-medium text-ink">{b.csvFileName ?? b.id}</span>
                     <span className="flex items-center gap-3 text-xs text-ink-muted">
                       <span>{b._count.recipients} recipients</span>
-                      <span className="rounded-full bg-sidebar px-2 py-1">{b.status}</span>
+                      <span className="rounded-full bg-accent/10 px-2 py-1 text-accent">{b.status}</span>
                     </span>
                   </Link>
                 </li>
@@ -149,13 +190,13 @@ export default function HomePage() {
       <div className="flex flex-wrap gap-3">
         <Link
           href="/batches/new"
-          className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover"
+          className="accent-gradient rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03]"
         >
           New batch
         </Link>
         <Link
           href="/check-balance"
-          className="rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+          className="rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar"
         >
           Check balance
         </Link>

@@ -23,7 +23,7 @@ const STEPS = [
 
 function BatchDiagram() {
   return (
-    <div className="rounded-xl border border-hairline bg-surface p-6 sm:p-8">
+    <div className="rounded-2xl border border-hairline bg-surface p-6 shadow-sm sm:p-8">
       <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
         <div className="flex flex-col gap-2">
           {RECIPIENTS.map((address, i) => (
@@ -41,7 +41,7 @@ function BatchDiagram() {
           <div className="batch-flow-line h-px w-full" />
         </div>
 
-        <div className="shrink-0 rounded-lg border border-hairline bg-paper px-4 py-3">
+        <div className="shrink-0 rounded-2xl border border-hairline bg-paper px-4 py-3">
           <div className="flex items-center gap-2 text-success">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
@@ -57,20 +57,42 @@ function BatchDiagram() {
 
 export default function LandingPage() {
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex flex-1 flex-col overflow-x-clip">
       <header className="flex items-center justify-between border-b border-hairline px-6 py-4">
-        <span className="font-serif text-lg font-semibold">Sendall</span>
+        <span className="flex items-center gap-2.5">
+          <span className="accent-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white">
+            S
+          </span>
+          <span className="text-lg font-bold tracking-tight">Sendall</span>
+        </span>
         <ConnectButton />
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-24 px-6 py-16 sm:py-20">
+      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col gap-24 px-6 py-16 sm:py-20">
+        {/* Ambient signature glow — the one place this page spends its
+            visual boldness. Fixed to the hero, faded via mask so it never
+            competes with body copy below. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-[640px] w-[900px] -translate-x-1/2 opacity-[0.16] blur-[110px]"
+          style={{
+            backgroundImage:
+              "radial-gradient(closest-side, var(--color-accent), transparent), radial-gradient(closest-side, var(--color-accent-2), transparent)",
+            backgroundPosition: "30% 30%, 70% 60%",
+            backgroundSize: "60% 60%, 55% 55%",
+            backgroundRepeat: "no-repeat",
+          }}
+        />
+
         <section className="grid items-center gap-16 lg:grid-cols-[1.05fr_1fr]">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-accent">
               Stellar · Bulk payments
             </p>
-            <h1 className="mt-5 font-serif text-5xl leading-[1.05] font-semibold text-ink sm:text-6xl">
-              Pay hundreds of wallets. One signature.
+            <h1 className="mt-5 text-5xl leading-[1.05] font-bold tracking-tight text-ink sm:text-6xl">
+              Pay hundreds of wallets.
+              <br />
+              <span className="gradient-text">One signature.</span>
             </h1>
             <p className="mt-6 max-w-md text-base text-ink-muted">
               Upload a recipient list — Sendall validates every address and trustline,
@@ -79,7 +101,7 @@ export default function LandingPage() {
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link
                 href="/batches/new"
-                className="rounded-md bg-accent px-6 py-3 text-sm font-medium text-accent-ink hover:bg-accent-hover"
+                className="accent-gradient rounded-full px-6 py-3 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] hover:shadow-md"
               >
                 Start a batch
               </Link>
@@ -93,12 +115,16 @@ export default function LandingPage() {
         </section>
 
         <section>
-          <ol className="grid gap-px overflow-hidden rounded-xl border border-hairline bg-hairline sm:grid-cols-3">
+          <ol className="grid gap-px overflow-hidden rounded-2xl border border-hairline bg-hairline sm:grid-cols-3">
             {STEPS.map((step) => (
-              <li key={step.n} className="bg-surface px-6 py-8">
+              <li
+                key={step.n}
+                className="group relative bg-surface px-6 py-8 transition-transform duration-200 hover:z-10 hover:-translate-y-1 hover:shadow-lg"
+              >
                 <span className="font-mono text-xs text-ink-faint">{step.n}</span>
-                <h2 className="mt-2 font-serif text-lg font-semibold text-ink">{step.title}</h2>
+                <h2 className="mt-2 text-lg font-semibold text-ink">{step.title}</h2>
                 <p className="mt-2 text-sm text-ink-muted">{step.body}</p>
+                <span className="accent-gradient absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 transition-transform duration-200 group-hover:scale-x-100" />
               </li>
             ))}
           </ol>

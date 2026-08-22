@@ -29,7 +29,7 @@ export default function AddressListsPage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-serif text-2xl font-semibold text-ink">Address Lists</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">Address Lists</h1>
           <p className="mt-1 text-sm text-ink-muted">
             Save name + address pairs to start batches from later.
           </p>
@@ -37,7 +37,7 @@ export default function AddressListsPage() {
         {address && (
           <Link
             href="/address-lists/new"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover"
+            className="accent-gradient rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03]"
           >
             New list
           </Link>
@@ -45,18 +45,18 @@ export default function AddressListsPage() {
       </div>
 
       {!address ? (
-        <div className="rounded-lg border border-hairline bg-surface px-5 py-8 text-center">
+        <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-8 text-center">
           <p className="text-sm text-ink-muted">Connect your wallet to save and reuse address lists.</p>
           <div className="mt-4 flex justify-center">
             <ConnectButton />
           </div>
         </div>
       ) : !lists ? (
-        <p className="rounded-lg border border-hairline bg-surface px-5 py-8 text-sm text-ink-muted">
+        <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-8 text-sm text-ink-muted">
           Loading…
         </p>
       ) : lists.length === 0 ? (
-        <p className="rounded-lg border border-hairline bg-surface px-5 py-8 text-sm text-ink-muted">
+        <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-8 text-sm text-ink-muted">
           No address lists yet —{" "}
           <Link href="/address-lists/new" className="text-accent hover:underline">
             create one
@@ -64,13 +64,13 @@ export default function AddressListsPage() {
           .
         </p>
       ) : (
-        <div className="rounded-lg border border-hairline bg-surface">
+        <div className="rounded-2xl border border-hairline bg-surface shadow-sm">
           <ul className="divide-y divide-hairline">
             {lists.map((list) => (
               <li key={list.id}>
                 <Link
                   href={`/address-lists/${list.id}`}
-                  className="flex items-center justify-between px-5 py-3 hover:bg-sidebar"
+                  className="flex items-center justify-between px-5 py-3 transition-colors hover:bg-sidebar"
                 >
                   <span className="font-medium text-ink">{list.name}</span>
                   <span className="text-xs text-ink-muted">{list._count.entries} addresses</span>

@@ -99,7 +99,7 @@ export function RecipientsEditor({
         )}
       </div>
 
-      <div className="flex overflow-hidden rounded-md border border-hairline bg-paper focus-within:border-accent">
+      <div className="flex overflow-hidden rounded-xl border border-hairline bg-paper focus-within:border-accent">
         <div
           ref={gutterRef}
           aria-hidden

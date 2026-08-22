@@ -12,6 +12,9 @@
   --color-accent: #2f5fda;
   --color-accent-hover: #23499f;
   --color-accent-ink: #ffffff;
+  /* Companion hue for the accent, used only in gradients/glows — never on
+     its own as a solid fill, so the brand still reads as one blue. */
+  --color-accent-2: #7c5cff;
 
   --color-success: #15803d;
   --color-success-soft: #e3f5e9;
@@ -32,6 +35,7 @@
   --color-accent: var(--color-accent);
   --color-accent-hover: var(--color-accent-hover);
   --color-accent-ink: var(--color-accent-ink);
+  --color-accent-2: var(--color-accent-2);
   --color-success: var(--color-success);
   --color-success-soft: var(--color-success-soft);
   --color-warning: var(--color-warning);
@@ -57,6 +61,7 @@
     --color-accent: #6690f2;
     --color-accent-hover: #86a8f5;
     --color-accent-ink: #0a0a0b;
+    --color-accent-2: #a48cff;
 
     --color-success: #4ade80;
     --color-success-soft: rgba(74, 222, 128, 0.12);
@@ -105,4 +110,18 @@ body {
   .batch-flow-line {
     animation: none;
   }
+}
+
+/* Signature gradient — the one place the accent's companion hue shows up.
+   Used sparingly: primary CTAs, the hero headline's emphasis word, and
+   ambient background glows. */
+.accent-gradient {
+  background-image: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+}
+
+.gradient-text {
+  background-image: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }

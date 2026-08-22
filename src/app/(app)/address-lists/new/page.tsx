@@ -59,7 +59,7 @@ export default function NewAddressListPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">New address list</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">New address list</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Paste rows, upload a CSV, or add addresses one at a time later.
         </p>
@@ -74,7 +74,7 @@ export default function NewAddressListPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Vendors, Contributors, Airdrop round 3…"
-          className="rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+          className="rounded-xl border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
         />
       </div>
 
@@ -120,7 +120,7 @@ export default function NewAddressListPage() {
           }}
           rows={10}
           placeholder={"name,address\nAlice,G...\nG... (name optional)"}
-          className="rounded-md border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
+          className="rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
         />
         <p className="text-xs text-ink-faint">
           One per line: name,address — or just an address.
@@ -133,7 +133,7 @@ export default function NewAddressListPage() {
           type="button"
           onClick={handleSubmit}
           disabled={busy}
-          className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         >
           {busy ? "Creating…" : "Create list"}
         </button>

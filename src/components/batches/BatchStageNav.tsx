@@ -50,9 +50,9 @@ export function BatchStageNav({
             }`}
           >
             <span
-              className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium ${
                 isCurrent
-                  ? "bg-accent text-accent-ink"
+                  ? "accent-gradient text-white"
                   : isDone
                     ? "bg-success-soft text-success"
                     : "bg-sidebar text-ink-faint"

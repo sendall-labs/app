@@ -94,7 +94,7 @@ export default function AddressListDetailPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-serif text-2xl font-semibold text-ink">{list.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">{list.name}</h1>
           <p className="mt-1 text-sm text-ink-muted">{list.entries.length} addresses</p>
         </div>
         <div className="flex gap-3">
@@ -102,7 +102,7 @@ export default function AddressListDetailPage() {
             type="button"
             onClick={startBatch}
             disabled={busy !== null || list.entries.length === 0}
-            className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
           >
             {busy === "start-batch" ? "Starting…" : "Start batch from this list"}
           </button>
@@ -110,7 +110,7 @@ export default function AddressListDetailPage() {
             type="button"
             onClick={deleteList}
             disabled={busy !== null}
-            className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
           >
             Delete
           </button>
@@ -123,28 +123,28 @@ export default function AddressListDetailPage() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={12}
-            className="rounded-md border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
+            className="rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
           />
           <div className="flex gap-3">
             <button
               type="button"
               onClick={saveEdits}
               disabled={busy !== null}
-              className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
             >
               {busy === "save" ? "Saving…" : "Save"}
             </button>
             <button
               type="button"
               onClick={() => setEditing(false)}
-              className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+              className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar"
             >
               Cancel
             </button>
           </div>
         </div>
       ) : (
-        <div className="rounded-lg border border-hairline bg-surface">
+        <div className="rounded-2xl border border-hairline bg-surface shadow-sm">
           <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
             <span className="text-xs uppercase tracking-wide text-ink-faint">Addresses</span>
             <button

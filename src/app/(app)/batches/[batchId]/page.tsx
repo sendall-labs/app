@@ -745,7 +745,7 @@ export default function BatchReviewPage() {
     <div className="flex flex-col gap-6">
       {isDemo && (
         <div
-          className="fixed z-50 w-72 rounded-lg border border-accent bg-surface p-4 shadow-lg"
+          className="fixed z-50 w-72 rounded-2xl border border-accent bg-surface p-4 shadow-lg"
           style={
             demoAnchor
               ? {
@@ -775,7 +775,7 @@ export default function BatchReviewPage() {
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Batch review</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Batch review</h1>
         <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
           {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
@@ -840,12 +840,12 @@ export default function BatchReviewPage() {
                   onChange={(e) => setBulkAmount(e.target.value)}
                   placeholder="Amount for all"
                   inputMode="decimal"
-                  className="w-36 rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+                  className="w-36 rounded-xl border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
                 />
                 <button
                   onClick={() => applyAmountToAll(bulkAmount)}
                   disabled={!bulkAmount.trim()}
-                  className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                  className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Set for all
                 </button>
@@ -858,7 +858,7 @@ export default function BatchReviewPage() {
                 <button
                   onClick={refreshAll}
                   disabled={anyBusy}
-                  className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                  className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
                 </button>
@@ -868,7 +868,7 @@ export default function BatchReviewPage() {
                   ref={signSendBtnRef}
                   onClick={prepareAndSend}
                   disabled={anyBusy}
-                  className={`cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 ${
+                  className={`accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 ${
                     demoHighlightSignSend ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
                   }`}
                 >
@@ -906,7 +906,7 @@ export default function BatchReviewPage() {
               <button
                 onClick={retryFailed}
                 disabled={anyBusy}
-                className="cursor-pointer rounded-md border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
+                className="cursor-pointer rounded-full border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
               </button>
@@ -933,7 +933,7 @@ export default function BatchReviewPage() {
         <button
           onClick={() => setPinnedStage(STAGES[stageIndex - 1].key)}
           disabled={stageIndex === 0}
-          className="cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40"
+          className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Back
         </button>
@@ -941,7 +941,7 @@ export default function BatchReviewPage() {
           ref={nextBtnRef}
           onClick={() => setPinnedStage(STAGES[stageIndex + 1].key)}
           disabled={stageIndex === STAGES.length - 1}
-          className={`cursor-pointer rounded-md border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40 ${
+          className={`cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-40 ${
             demoHighlightNext ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
           }`}
         >
@@ -954,7 +954,7 @@ export default function BatchReviewPage() {
 
 function InfoField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+    <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
       <p className="text-xs uppercase tracking-wide text-ink-faint">{label}</p>
       <div className="mt-1.5 text-sm font-medium text-ink">{value}</div>
     </div>
@@ -962,7 +962,7 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
 }
 
 const cardFieldClass =
-  "w-full rounded-md border border-hairline bg-paper px-2 py-1 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
+  "w-full rounded-xl border border-hairline bg-paper px-2 py-1 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
 
 function NetworkField({
   network,
@@ -976,7 +976,7 @@ function NetworkField({
   patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
 }) {
   return (
-    <div className="flex flex-col justify-center rounded-lg border border-hairline bg-surface px-5 py-4">
+    <div className="flex flex-col justify-center rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
       <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
       <select
         value={network}
@@ -1092,7 +1092,7 @@ function AssetField({
 
   if (mode === "custom") {
     return (
-      <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+      <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
         <div className="flex items-center justify-between">
           <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
           <button
@@ -1147,12 +1147,12 @@ function AssetField({
   }
 
   return (
-    <div ref={rootRef} className="relative rounded-lg border border-hairline bg-surface px-5 py-4">
+    <div ref={rootRef} className="relative rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
       <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="mt-2 flex w-full cursor-pointer items-center gap-3 rounded-md border border-hairline bg-paper px-3 py-2 text-left hover:border-accent"
+        className="mt-2 flex w-full cursor-pointer items-center gap-3 rounded-xl border border-hairline bg-paper px-3 py-2 text-left hover:border-accent"
       >
         <AssetIcon
           code={currentCode}
@@ -1175,7 +1175,7 @@ function AssetField({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-lg border border-hairline bg-surface shadow-lg">
+        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-xl border border-hairline bg-surface shadow-lg">
           <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
             <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.6">
               <circle cx="9" cy="9" r="6" />
@@ -1205,7 +1205,7 @@ function AssetField({
                 key={a.code}
                 type="button"
                 onClick={() => selectAsset(a)}
-                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left hover:bg-sidebar"
+                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-sidebar"
               >
                 <AssetIcon code={a.code} accentClass={a.accentClass} icon={a.icon} />
                 <span className="min-w-0 flex-1">
@@ -1246,7 +1246,7 @@ function PrepareSection({
   flushPendingSave: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-hairline bg-surface p-6">
+    <div className="rounded-2xl border border-hairline bg-surface shadow-sm p-6">
       <RecipientsEditor value={text} onChange={onTextChange} onBlur={flushPendingSave} readOnly={!canEdit} />
       <p className="mt-4 text-xs text-ink-faint">
         Addresses and account status are checked automatically as you edit — switch to Confirm once
@@ -1284,7 +1284,7 @@ function EditableRecipientsTable({
   flushPendingSave: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-hairline bg-surface">
+    <div className="rounded-2xl border border-hairline bg-surface shadow-sm">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1329,7 +1329,7 @@ function EditableRecipientsTable({
                           <button
                             onClick={() => copyAddress(row.destination)}
                             title="Copy address"
-                            className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                            className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-sidebar hover:text-ink"
                           >
                             <CopyIcon />
                           </button>
@@ -1338,7 +1338,7 @@ function EditableRecipientsTable({
                             target="_blank"
                             rel="noopener noreferrer"
                             title="Open in explorer"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-sidebar hover:text-ink"
                           >
                             <ExternalLinkIcon />
                           </a>
@@ -1400,7 +1400,7 @@ function EditableRecipientsTable({
                           onClick={() => refreshOne(r.id)}
                           disabled={busyRowIds.has(r.id) || bulkBusy !== null}
                           title="Refresh this address"
-                          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-hairline text-ink-muted transition-colors hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           <RefreshIcon spinning={busyRowIds.has(r.id)} />
                         </button>
@@ -1409,7 +1409,7 @@ function EditableRecipientsTable({
                         <button
                           onClick={() => removeRow(row.id)}
                           title="Remove recipient"
-                          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-lg leading-none text-ink-faint hover:bg-danger-soft hover:text-danger"
+                          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-lg leading-none text-ink-faint hover:bg-danger-soft hover:text-danger"
                         >
                           ×
                         </button>
@@ -1444,7 +1444,7 @@ function RecipientsTable({
   txHashByRecipient: Map<string, string>;
 }) {
   return (
-    <div className="rounded-lg border border-hairline bg-surface">
+    <div className="rounded-2xl border border-hairline bg-surface shadow-sm">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1473,7 +1473,7 @@ function RecipientsTable({
                         <button
                           onClick={() => copyAddress(r.destination)}
                           title="Copy address"
-                          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-sidebar hover:text-ink"
                         >
                           <CopyIcon />
                         </button>
@@ -1482,7 +1482,7 @@ function RecipientsTable({
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Open in explorer"
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-sidebar hover:text-ink"
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-faint transition-colors hover:bg-sidebar hover:text-ink"
                         >
                           <ExternalLinkIcon />
                         </a>
@@ -1524,7 +1524,7 @@ function RecipientsTable({
                       onClick={() => refreshOne(r.id)}
                       disabled={busyRowIds.has(r.id) || bulkBusy !== null}
                       title="Refresh this address"
-                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-hairline text-ink-muted hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-hairline text-ink-muted transition-colors hover:bg-sidebar hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RefreshIcon spinning={busyRowIds.has(r.id)} />
                     </button>

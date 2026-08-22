@@ -46,13 +46,13 @@ export default function DemoPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Demo</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Demo</h1>
         <p className="mt-1 text-sm text-ink-muted">
           A guided walkthrough of the full batch flow — on real testnet, not a simulation.
         </p>
       </div>
 
-      <ol className="grid gap-px overflow-hidden rounded-lg border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-4">
+      <ol className="grid gap-px overflow-hidden rounded-2xl border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-4">
         {STEPS.map((step) => (
           <li key={step.n} className="bg-surface px-5 py-6">
             <span className="font-mono text-xs text-ink-faint">{step.n}</span>
@@ -67,7 +67,7 @@ export default function DemoPage() {
           type="button"
           onClick={startDemo}
           disabled={busy}
-          className="cursor-pointer rounded-md bg-accent px-6 py-3 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="accent-gradient cursor-pointer rounded-full px-6 py-3 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         >
           {busy ? "Starting…" : "Start the demo"}
         </button>

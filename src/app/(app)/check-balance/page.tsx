@@ -58,7 +58,7 @@ export default function CheckBalancePage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="font-serif text-2xl font-semibold text-ink">Check Balance</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Check Balance</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Bulk-check whether addresses exist, hold a trustline, and their balance. No wallet needed.
         </p>
@@ -73,7 +73,7 @@ export default function CheckBalancePage() {
             id="cb-network"
             value={network}
             onChange={(e) => setNetwork(e.target.value as typeof network)}
-            className="rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            className="rounded-xl border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
           >
             <option value="TESTNET">Testnet</option>
             <option value="PUBLIC">Public (Mainnet)</option>
@@ -89,13 +89,13 @@ export default function CheckBalancePage() {
               value={assetCode}
               onChange={(e) => setAssetCode(e.target.value)}
               placeholder="Code (e.g. USDC)"
-              className="w-1/3 rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+              className="w-1/3 rounded-xl border border-hairline bg-paper px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             />
             <input
               value={assetIssuer}
               onChange={(e) => setAssetIssuer(e.target.value)}
               placeholder="Issuer address"
-              className="flex-1 rounded-md border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
+              className="flex-1 rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
             />
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function CheckBalancePage() {
           onChange={(e) => setText(e.target.value)}
           rows={8}
           placeholder={"name,address\nAlice,G...\nG... (name optional)"}
-          className="rounded-md border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
+          className="rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
         />
         <p className="text-xs text-ink-faint">One per line: name,address — or just an address.</p>
       </div>
@@ -130,14 +130,14 @@ export default function CheckBalancePage() {
           type="button"
           onClick={handleCheck}
           disabled={busy}
-          className="cursor-pointer rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         >
           {busy ? "Checking…" : "Check balances"}
         </button>
       </div>
 
       {results && (
-        <div className="rounded-lg border border-hairline bg-surface">
+        <div className="rounded-2xl border border-hairline bg-surface shadow-sm">
           {results.length === 0 ? (
             <p className="px-5 py-8 text-sm text-ink-muted">No valid addresses to check.</p>
           ) : (
