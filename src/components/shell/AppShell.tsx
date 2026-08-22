@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { ConnectButton } from "@/components/wallet/ConnectButton";
 
@@ -89,10 +90,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-hairline bg-sidebar px-4 py-5 md:flex">
         <Link href="/home" className="flex items-center gap-2.5 px-2 py-1.5">
-          <span className="accent-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white">
-            S
-          </span>
-          <span className="text-lg font-bold tracking-tight">Sendall</span>
+          <BrandLogo />
         </Link>
 
         <nav className="mt-8 flex flex-col gap-0.5">
@@ -131,10 +129,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3 md:hidden">
         <Link href="/home" className="flex items-center gap-2">
-          <span className="accent-gradient flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold text-white">
-            S
-          </span>
-          <span className="text-lg font-bold tracking-tight">Sendall</span>
+          <BrandLogo compact />
         </Link>
         <ConnectButton />
       </div>

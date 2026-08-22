@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { ConnectButton } from "@/components/wallet/ConnectButton";
 
 const RECIPIENTS = ["GDQP…4RXK", "GCLM…9F2H", "GA7X…K03P", "GB2N…WQ81", "GDF6…L9M4"];
@@ -59,12 +60,7 @@ export default function LandingPage() {
   return (
     <div className="flex flex-1 flex-col overflow-x-clip">
       <header className="flex items-center justify-between border-b border-hairline px-6 py-4">
-        <span className="flex items-center gap-2.5">
-          <span className="accent-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white">
-            S
-          </span>
-          <span className="text-lg font-bold tracking-tight">Sendall</span>
-        </span>
+        <BrandLogo />
         <ConnectButton />
       </header>
 
