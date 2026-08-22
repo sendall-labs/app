@@ -123,7 +123,7 @@ export default function NewAddressListPage() {
           className="rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
         />
         <p className="text-xs text-ink-faint">
-          One per line: name,address — or just an address.
+          One per line: name,address, or just an address.
           {fileName && <span className="ml-2 text-ink-muted">Loaded from {fileName}</span>}
         </p>
       </div>

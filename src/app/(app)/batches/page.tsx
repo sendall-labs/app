@@ -124,7 +124,7 @@ export default function BatchesPage() {
           <p className="px-5 py-8 text-sm text-ink-muted">Loading…</p>
         ) : batches.length === 0 ? (
           <p className="px-5 py-8 text-sm text-ink-muted">
-            No batches yet — upload a recipient list to get started.
+            No batches yet. Upload a recipient list to get started.
           </p>
         ) : (
           <table className="w-full text-sm">

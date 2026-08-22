@@ -122,7 +122,7 @@ export default function CheckBalancePage() {
           placeholder={"name,address\nAlice,G...\nG... (name optional)"}
           className="rounded-xl border border-hairline bg-paper px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
         />
-        <p className="text-xs text-ink-faint">One per line: name,address — or just an address.</p>
+        <p className="text-xs text-ink-faint">One per line: name,address, or just an address.</p>
       </div>
 
       <div>

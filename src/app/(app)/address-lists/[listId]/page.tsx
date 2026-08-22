@@ -156,7 +156,7 @@ export default function AddressListDetailPage() {
             </button>
           </div>
           {list.entries.length === 0 ? (
-            <p className="px-5 py-8 text-sm text-ink-muted">No addresses yet — click Edit to add some.</p>
+            <p className="px-5 py-8 text-sm text-ink-muted">No addresses yet. Click Edit to add some.</p>
           ) : (
             <ul className="divide-y divide-hairline">
               {list.entries.map((entry) => (

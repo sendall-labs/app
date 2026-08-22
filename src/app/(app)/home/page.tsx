@@ -86,7 +86,7 @@ export default function HomePage() {
             </p>
           ) : balances.length === 0 ? (
             <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-ink-muted">
-              No balances yet — this account isn&apos;t funded on{" "}
+              No balances yet. This account isn&apos;t funded on{" "}
               {network === "PUBLIC" ? "the public network" : "testnet"}.
             </p>
           ) : (
@@ -160,7 +160,7 @@ export default function HomePage() {
             <p className="px-5 py-8 text-sm text-ink-muted">Loading…</p>
           ) : recentBatches.length === 0 ? (
             <p className="px-5 py-8 text-sm text-ink-muted">
-              No batches yet —{" "}
+              No batches yet:{" "}
               <Link href="/batches/new" className="text-accent hover:underline">
                 start one
               </Link>

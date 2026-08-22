@@ -734,10 +734,10 @@ export default function BatchReviewPage() {
     displayedStage === "prepare"
       ? "Review the pre-filled recipients, then click Next → below."
       : displayedStage === "confirm"
-        ? "Click Sign & send — that's where your wallet connects and this becomes a real testnet transaction."
+        ? "Click Sign & send. That's where your wallet connects and this becomes a real testnet transaction."
         : batch.attempts.length === 0
           ? "Head back to Confirm and click Sign & send to submit."
-          : "Done — that was a real testnet transaction. Check the tx link on any recipient below.";
+          : "Done. That was a real testnet transaction. Check the tx link on any recipient below.";
   const demoHighlightNext = isDemo && displayedStage === "prepare";
   const demoHighlightSignSend = isDemo && displayedStage === "confirm";
 
@@ -893,7 +893,7 @@ export default function BatchReviewPage() {
           />
           {readyCount === 0 && (
             <p className="text-sm text-ink-muted">
-              Nothing&apos;s ready to send yet — fix or refresh recipients on the Prepare tab first.
+              Nothing&apos;s ready to send yet. Fix or refresh recipients on the Prepare tab first.
             </p>
           )}
         </div>
@@ -923,7 +923,7 @@ export default function BatchReviewPage() {
           />
           {batch.attempts.length === 0 && (
             <p className="text-sm text-ink-muted">
-              Nothing&apos;s been sent yet — head to Confirm and sign to submit this batch.
+              Nothing&apos;s been sent yet. Head to Confirm and sign to submit this batch.
             </p>
           )}
         </div>
@@ -1249,7 +1249,7 @@ function PrepareSection({
     <div className="rounded-2xl border border-hairline bg-surface shadow-sm p-6">
       <RecipientsEditor value={text} onChange={onTextChange} onBlur={flushPendingSave} readOnly={!canEdit} />
       <p className="mt-4 text-xs text-ink-faint">
-        Addresses and account status are checked automatically as you edit — switch to Confirm once
+        Addresses and account status are checked automatically as you edit. Switch to Confirm once
         recipients look ready.
       </p>
     </div>

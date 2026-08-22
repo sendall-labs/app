@@ -57,7 +57,7 @@ export default function AddressListsPage() {
         </p>
       ) : lists.length === 0 ? (
         <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-8 text-sm text-ink-muted">
-          No address lists yet —{" "}
+          No address lists yet:{" "}
           <Link href="/address-lists/new" className="text-accent hover:underline">
             create one
           </Link>

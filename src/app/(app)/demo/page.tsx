@@ -12,10 +12,10 @@ const SAMPLE_RECIPIENTS = [
 ].join("\n");
 
 const STEPS = [
-  { n: "01", title: "Create a batch", body: "No wallet needed — this happens anonymously." },
+  { n: "01", title: "Create a batch", body: "No wallet needed. This happens anonymously." },
   { n: "02", title: "Recipients are pre-filled", body: "Two funded testnet addresses, ready to validate." },
   { n: "03", title: "Validate", body: "Address, trustline, and balance checks run automatically." },
-  { n: "04", title: "Sign & send", body: "Connect your wallet here — this is a real testnet transaction." },
+  { n: "04", title: "Sign & send", body: "Connect your wallet here. This is a real testnet transaction." },
 ];
 
 export default function DemoPage() {
@@ -48,7 +48,7 @@ export default function DemoPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Demo</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          A guided walkthrough of the full batch flow — on real testnet, not a simulation.
+          A guided walkthrough of the full batch flow, on real testnet, not a simulation.
         </p>
       </div>
 

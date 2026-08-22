@@ -17,7 +17,7 @@ const STEPS = [
   {
     n: "03",
     title: "Sign & send",
-    body: "One signature authorizes the whole batch — even past 100 operations.",
+    body: "One signature authorizes the whole batch, even past 100 operations.",
   },
 ];
 
@@ -95,7 +95,7 @@ export default function LandingPage() {
               <span className="gradient-text">One signature.</span>
             </h1>
             <p className="mt-6 max-w-md text-base text-ink-muted">
-              Upload a recipient list — Sendall validates every address and trustline,
+              Upload a recipient list. Sendall validates every address and trustline,
               you sign once, and it chains the rest into a single ledger close.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-4">
