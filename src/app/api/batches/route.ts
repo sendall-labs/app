@@ -69,7 +69,10 @@ export async function POST(request: Request) {
       ownerPublicKey: publicKey,
       anonId,
       network,
-      sourceAccount: sourceAccount ?? null,
+      // A wallet already connected at creation time owns the batch
+      // outright — mirror /claim's invariant that ownerPublicKey and
+      // sourceAccount always move together, or prepare() later 409s.
+      sourceAccount: sourceAccount ?? publicKey ?? null,
       assetCode: assetCode || null,
       assetIssuer: assetIssuer || null,
       csvFileName,
