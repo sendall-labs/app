@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
@@ -12,6 +12,8 @@ import { formatAmount, sumAmounts } from "@/lib/format";
 import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
 import { DistributionProgress } from "@/components/distribution/DistributionProgress";
 import { KindBadge } from "@/components/batches/KindBadge";
+import { KindSwitch } from "@/components/batches/KindSwitch";
+import { isConvertible } from "@/lib/distribution/convertRules";
 import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
 
 // "channels" (default): one wallet signature, chunks sent in parallel by
@@ -40,7 +42,7 @@ type Recipient = {
   hasTrustline: boolean | null;
   status: string;
   errorMessage: string | null;
-  channelItems?: { transaction: { stellarTxHash: string | null; transactionHash: string } }[];
+  channelItems?: { status: string; resultCode: string | null; transaction: { stellarTxHash: string | null; transactionHash: string } }[];
 };
 
 type RunSummary = { id: string; status: string; purpose: string; errorCode: string | null; signedAt: string | null; createdAt: string };
@@ -190,6 +192,7 @@ function ExternalLinkIcon() {
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
   const isDemo = useSearchParams().get("demo") === "1";
+  const router = useRouter();
   const { login, signTransaction } = useWallet();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
@@ -531,6 +534,44 @@ export default function BatchReviewPage() {
     if (!res.ok) throw new Error((await res.json()).error ?? "Couldn't claim this batch");
   }, [batchId, login]);
 
+  const switchKind = useCallback(
+    async (next: "PAYMENT" | "CLAIMABLE_BALANCE") => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: next }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not change the type");
+        await load();
+        setPinnedStage("prepare");
+        toast.success(next === "CLAIMABLE_BALANCE" ? "Sending as claimable balances" : "Sending as payments");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not change the type");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId, load]
+  );
+
+  const convertFailed = useCallback(async () => {
+    setBulkBusy("convert");
+    try {
+      await ensureClaimed();
+      const res = await fetch(`/api/batches/${batchId}/convert-failed`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not create the claimable balance batch");
+      toast.success(`${data.moved} row${data.moved === 1 ? "" : "s"} moved to a new claimable balance batch`);
+      router.push(`/batches/${data.batchId}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create the claimable balance batch");
+    } finally {
+      setBulkBusy(null);
+    }
+  }, [batchId, ensureClaimed, router]);
+
   const distribution = useDistributionRun({
     signTransaction,
     ensureClaimed,
@@ -682,9 +723,16 @@ export default function BatchReviewPage() {
     }
   }
   for (const r of batch.recipients) {
-    const tx = r.channelItems?.[0]?.transaction;
+    const tx = r.channelItems?.find((i) => i.status === "SUCCESS")?.transaction;
     if (tx) txHashByRecipient.set(r.id, tx.stellarTxHash ?? tx.transactionHash);
   }
+  const kind = batch.kind ?? "PAYMENT";
+  const convertibleCount =
+    kind === "PAYMENT"
+      ? batch.recipients.filter((r) =>
+          isConvertible({ ...r, lastResultCode: r.channelItems?.[0]?.resultCode ?? null }, !batch.assetCode)
+        ).length
+      : 0;
 
   const savedRows = batch.recipients.map(recipientToRow);
   const prepareDisplayText = prepareText ?? rowsToText(savedRows);
@@ -755,6 +803,9 @@ export default function BatchReviewPage() {
           {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
         </p>
+        <div className="mt-4">
+          <KindSwitch value={kind} disabled={!canEdit || saving || anyBusy || distributionActive} onChange={(next) => void switchKind(next)} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -877,6 +928,16 @@ export default function BatchReviewPage() {
               <span />
             )}
             <div className="flex flex-wrap justify-end gap-2">
+              {convertibleCount > 0 && (
+                <button
+                  onClick={convertFailed}
+                  disabled={anyBusy || distributionActive}
+                  className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                  title="These recipients have no trustline or account yet. A claimable balance lets them claim once they do."
+                >
+                  {bulkBusy === "convert" ? "Creating…" : `Send ${convertibleCount} as claimable balance`}
+                </button>
+              )}
               {refreshableCount > 0 && (
                 <button
                   onClick={refreshAll}
@@ -925,6 +986,16 @@ export default function BatchReviewPage() {
       {displayedStage === "send" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap justify-end gap-2">
+            {convertibleCount > 0 && (
+              <button
+                onClick={convertFailed}
+                disabled={anyBusy || distributionActive}
+                className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                title="These recipients have no trustline or account yet. A claimable balance lets them claim once they do."
+              >
+                {bulkBusy === "convert" ? "Creating…" : `Send ${convertibleCount} as claimable balance`}
+              </button>
+            )}
             {failedCount > 0 && (
               <button
                 onClick={retryFailed}
