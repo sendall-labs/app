@@ -13,8 +13,21 @@ export async function GET(
   const batch = await prisma.batch.findFirst({
     where: { id: batchId, ...batchAccessWhere(access) },
     include: {
-      recipients: { orderBy: { rowIndex: "asc" } },
+      recipients: {
+        orderBy: { rowIndex: "asc" },
+        include: {
+          // Channel engine: the transaction each delivered row went out in.
+          channelItems: {
+            where: { status: "SUCCESS" },
+            select: { transaction: { select: { stellarTxHash: true, transactionHash: true } } },
+          },
+        },
+      },
       attempts: { orderBy: { chunkIndex: "asc" }, include: { items: true } },
+      runs: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, purpose: true, errorCode: true, signedAt: true, createdAt: true },
+      },
     },
   });
 
@@ -50,10 +63,11 @@ export async function PATCH(
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
     where: { id: batchId, ...batchAccessWhere(access) },
-    include: { _count: { select: { attempts: true } } },
+    include: { _count: { select: { attempts: true, runs: { where: { signedAt: { not: null } } } } } },
   });
   if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });
-  if (batch._count.attempts > 0) {
+  // Once a wallet has authorized anything, what was signed is fixed.
+  if (batch._count.attempts > 0 || batch._count.runs > 0) {
     return NextResponse.json(
       { error: "Can't edit network/asset after signing has started" },
       { status: 409 }

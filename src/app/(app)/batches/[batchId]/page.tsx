@@ -9,6 +9,19 @@ import { BatchStageNav, STAGES, stageFromStatus, type Stage } from "@/components
 import { AssetField, NetworkField } from "@/components/batches/AssetFields";
 import { explorerAccountUrl, explorerTxUrl } from "@/lib/stellar/explorer";
 import { formatAmount, sumAmounts } from "@/lib/format";
+import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
+
+// "channels" (default): one wallet signature, chunks sent in parallel by
+// the channel engine. "legacy": the Phase 1 sequential sender, kept as
+// the benchmark baseline and a fallback.
+const SEND_ENGINE = process.env.NEXT_PUBLIC_SEND_ENGINE === "legacy" ? "legacy" : "channels";
+
+const PHASE_LABEL: Partial<Record<RunPhase, string>> = {
+  preparing: "Preparing…",
+  "awaiting-signature": "Approve in your wallet…",
+  authorizing: "Authorizing…",
+  running: "Sending…",
+};
 
 type Recipient = {
   id: string;
@@ -23,7 +36,10 @@ type Recipient = {
   hasTrustline: boolean | null;
   status: string;
   errorMessage: string | null;
+  channelItems?: { transaction: { stellarTxHash: string | null; transactionHash: string } }[];
 };
+
+type RunSummary = { id: string; status: string; purpose: string; errorCode: string | null; signedAt: string | null; createdAt: string };
 
 type AttemptItem = { recipientId: string; status: string };
 type Attempt = { txHash: string | null; items: AttemptItem[] };
@@ -39,6 +55,7 @@ type Batch = {
   createdAt: string;
   recipients: Recipient[];
   attempts: Attempt[];
+  runs?: RunSummary[];
 };
 
 type EditableRow = {
@@ -240,7 +257,7 @@ export default function BatchReviewPage() {
     return () => clearInterval(interval);
   }, [batch, load]);
 
-  const canEdit = batch ? batch.attempts.length === 0 : false;
+  const canEdit = batch ? batch.attempts.length === 0 && !(batch.runs ?? []).some((r) => r.signedAt) : false;
   const anyBusy = bulkBusy !== null || busyRowIds.size > 0;
 
   const runChecks = useCallback(
@@ -508,7 +525,36 @@ export default function BatchReviewPage() {
     if (!res.ok) throw new Error((await res.json()).error ?? "Couldn't claim this batch");
   }, [batchId, login]);
 
+  const distribution = useDistributionRun({
+    signTransaction,
+    ensureClaimed,
+    onFinished: (run) => {
+      void load().then(() => setPinnedStage(null));
+      if (run.status === "COMPLETED") toast.success(run.purpose === "CLEANUP" ? "Leftover signers removed" : "Distribution complete");
+      else if (run.status === "PARTIALLY_FAILED") toast.warning("Some rows were not delivered. You can send them again.");
+      else toast.error(run.errorMessage ?? "The distribution did not go through.");
+    },
+    // A failed start (preflight problems, wallet rejection): reload so
+    // rows flagged by preflight show their reason.
+    onError: (err) => {
+      toast.error(err.message);
+      void load();
+    },
+  });
+  const distributionActive = ["preparing", "awaiting-signature", "authorizing", "running"].includes(distribution.phase);
+
+  // Re-attach to a run that is still in flight when the page opens.
+  const { watch: watchRun, phase: distributionPhase } = distribution;
+  const inFlightRunId = batch?.runs?.find((r) => r.signedAt && ["SETUP_SUBMITTED", "SETUP_CONFIRMED", "PAYMENTS_SUBMITTING"].includes(r.status))?.id;
+  useEffect(() => {
+    if (inFlightRunId && distributionPhase === "idle") watchRun(inFlightRunId);
+  }, [inFlightRunId, distributionPhase, watchRun]);
+
   const prepareAndSend = useCallback(async () => {
+    if (SEND_ENGINE === "channels") {
+      await distribution.start(batchId);
+      return;
+    }
     setBulkBusy("send");
     try {
       await ensureClaimed();
@@ -537,9 +583,14 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed]);
+  }, [batchId, load, signTransaction, ensureClaimed, distribution]);
 
   const retryFailed = useCallback(async () => {
+    const lastRun = batch?.runs?.find((r) => r.purpose === "SEND" || r.purpose === "REAUTHORIZE");
+    if (SEND_ENGINE === "channels" && lastRun) {
+      await distribution.reauthorize(lastRun.id);
+      return;
+    }
     setBulkBusy("retry");
     try {
       await ensureClaimed();
@@ -568,7 +619,7 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed]);
+  }, [batchId, load, signTransaction, ensureClaimed, batch, distribution]);
 
   const refreshableCount = useMemo(() => {
     if (!batch) return 0;
@@ -623,6 +674,10 @@ export default function BatchReviewPage() {
     for (const item of attempt.items) {
       if (item.status === "SUCCESS") txHashByRecipient.set(item.recipientId, attempt.txHash);
     }
+  }
+  for (const r of batch.recipients) {
+    const tx = r.channelItems?.[0]?.transaction;
+    if (tx) txHashByRecipient.set(r.id, tx.stellarTxHash ?? tx.transactionHash);
   }
 
   const savedRows = batch.recipients.map(recipientToRow);
@@ -768,7 +823,7 @@ export default function BatchReviewPage() {
               {refreshableCount > 0 && (
                 <button
                   onClick={refreshAll}
-                  disabled={anyBusy}
+                  disabled={anyBusy || distributionActive}
                   className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
@@ -778,12 +833,12 @@ export default function BatchReviewPage() {
                 <button
                   ref={signSendBtnRef}
                   onClick={prepareAndSend}
-                  disabled={anyBusy}
+                  disabled={anyBusy || distributionActive}
                   className={`accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 ${
                     demoHighlightSignSend ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
                   }`}
                 >
-                  {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
+                  {bulkBusy === "send" ? "Sending…" : (PHASE_LABEL[distribution.phase] ?? `Sign & send (${readyCount})`)}
                 </button>
               )}
             </div>
@@ -816,10 +871,10 @@ export default function BatchReviewPage() {
             {failedCount > 0 && (
               <button
                 onClick={retryFailed}
-                disabled={anyBusy}
+                disabled={anyBusy || distributionActive}
                 className="cursor-pointer rounded-full border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
+                {bulkBusy === "retry" ? "Retrying…" : (PHASE_LABEL[distribution.phase] ?? `Send failed rows again (${failedCount})`)}
               </button>
             )}
           </div>

@@ -144,6 +144,9 @@ export function serializeRun(
       confirmedAt: run.setupConfirmedAt,
       expiresAt: run.setupMaxTime,
     },
+    // Only the sender's signature can make this setup do anything, so it
+    // is safe to hand back while it waits for one (e.g. after a reload).
+    setupXdr: run.status === "AWAITING_USER_SIGNATURE" ? run.setupXdr : null,
     signedAt: run.signedAt,
     completedAt: run.completedAt,
     elapsedMs: run.signedAt ? end.getTime() - run.signedAt.getTime() : null,
