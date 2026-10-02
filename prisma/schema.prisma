@@ -291,6 +291,9 @@ model DistributionRun {
   sponsorAccount String
   preAuthWeight  Int?
   parentRunId    String?
+  // advanceRun lease: only one worker drives a run at a time.
+  leaseOwner     String?
+  leaseUntil     DateTime?
 
   setupXdr         String?   @db.Text
   setupHash        String?   @unique

@@ -1,0 +1,420 @@
+import { randomUUID } from "node:crypto";
+import pLimit from "p-limit";
+import { Asset, TransactionBuilder, type Transaction } from "@stellar/stellar-sdk";
+import type { ChannelTransaction, DistributionRun } from "@/generated/prisma/client";
+import type { Network, RunPurpose } from "@/generated/prisma/enums";
+import { prisma } from "@/lib/db/prisma";
+import { getNetworkPassphrase, getRpcServer } from "@/lib/stellar/client";
+import { getSponsorKeypair, isSponsorConfigured } from "@/lib/stellar/serviceAccounts";
+import { loadAccountAuthority, planAuthority } from "./authority";
+import { buildChunks, chunkCount, type DistributionOp } from "./buildChunks";
+import { buildSetup, SETUP_TTL_SECONDS } from "./buildSetup";
+import {
+  channelKeypair,
+  quarantineChannel,
+  releaseChannels,
+  reserveChannels,
+} from "./channelPool";
+import { DistributionError } from "./errors";
+import { buildFeeBump, feeRatePerOp, submitPersisted, type SubmitOutcome } from "./feeBump";
+import { assertSetupShape, verifySignedSetup } from "./verifySetup";
+
+// Chunks get a longer window than the setup so they can still land after
+// the setup confirms at the very end of its own window.
+export const CHUNK_TTL_SECONDS = 15 * 60;
+// Channels stay reserved a little past the chunk window: after that the
+// pre-authorized transaction can never apply.
+const CHANNEL_GRACE_MS = 60_000;
+const LEASE_MS = 90_000;
+const SUBMIT_CONCURRENCY = Number(process.env.SUBMIT_CONCURRENCY ?? 10);
+
+const TERMINAL_CHUNK = new Set(["SUCCESS", "FAILED", "REAUTHORIZATION_REQUIRED", "EXPIRED"]);
+const TERMINAL_RUN = new Set(["COMPLETED", "PARTIALLY_FAILED", "FAILED", "EXPIRED"]);
+
+export type PrepareInput = {
+  batchId: string;
+  network: Network;
+  sourceAccount: string;
+  idempotencyKey: string;
+  asset: Asset | null;
+  ops: DistributionOp[];
+  claimExpiresAt?: Date;
+  purpose?: RunPurpose;
+  parentRunId?: string;
+  walletKey?: string;
+  now?: Date;
+};
+
+export type PreparedRun = { runId: string; setupXdr: string; transactionCount: number; status: DistributionRun["status"] };
+
+/**
+ * Phase 1-3: locks channels, builds and persists the exact chunk
+ * transactions and the sponsor-signed setup. Calling it again with the
+ * same idempotency key returns the same run instead of building a second
+ * setup.
+ */
+export async function prepareRun(input: PrepareInput): Promise<PreparedRun> {
+  const existing = await prisma.distributionRun.findUnique({
+    where: { idempotencyKey: input.idempotencyKey },
+    include: { _count: { select: { transactions: true } } },
+  });
+  if (existing) {
+    if (!existing.setupXdr) throw new DistributionError("INVALID_STATE", `Run ${existing.id} did not finish preparing (${existing.status}).`);
+    return { runId: existing.id, setupXdr: existing.setupXdr, transactionCount: existing._count.transactions, status: existing.status };
+  }
+
+  const { network, sourceAccount, ops } = input;
+  if (ops.length === 0) throw new DistributionError("PREFLIGHT_FAILED", "Nothing to send.");
+  if (!isSponsorConfigured(network)) {
+    throw new DistributionError("SPONSOR_NOT_CONFIGURED", `Sending on ${network} is not available yet.`);
+  }
+  const sponsor = getSponsorKeypair(network);
+  const count = chunkCount(ops.length);
+  const plan = planAuthority(await loadAccountAuthority(network, sourceAccount), count, input.walletKey);
+
+  const now = input.now ?? new Date();
+  const chunkMaxTime = new Date(now.getTime() + CHUNK_TTL_SECONDS * 1000);
+  const setupMaxTime = new Date(now.getTime() + SETUP_TTL_SECONDS * 1000);
+
+  const run = await prisma.distributionRun.create({
+    data: {
+      batchId: input.batchId,
+      purpose: input.purpose ?? "SEND",
+      parentRunId: input.parentRunId,
+      idempotencyKey: input.idempotencyKey,
+      network,
+      sourceAccount,
+      sponsorAccount: sponsor.publicKey(),
+      preAuthWeight: plan.preAuthWeight,
+    },
+  });
+
+  let channelIds: string[] = [];
+  try {
+    const channels = await reserveChannels({
+      network,
+      count,
+      runId: run.id,
+      expiresAt: new Date(chunkMaxTime.getTime() + CHANNEL_GRACE_MS),
+    });
+    channelIds = channels.map((c) => c.id);
+
+    const chunks = buildChunks({
+      network,
+      sourceAccount,
+      asset: input.asset,
+      ops,
+      channels,
+      maxTime: chunkMaxTime,
+      claimExpiresAt: input.claimExpiresAt,
+    });
+
+    await prisma.$transaction(async (tx) => {
+      for (const chunk of chunks) {
+        const row = await tx.channelTransaction.create({
+          data: {
+            runId: run.id,
+            chunkIndex: chunk.chunkIndex,
+            channelPublicKey: chunk.channelPublicKey,
+            channelSequence: chunk.channelSequence,
+            unsignedInnerXdr: chunk.xdr,
+            transactionHash: chunk.hash,
+            maxTime: chunkMaxTime,
+            items: { create: chunk.items },
+          },
+        });
+        await tx.channelAccount.update({
+          where: { id: chunk.channelId },
+          data: { transactionId: row.id, expectedSequence: chunk.channelSequence },
+        });
+      }
+      await tx.distributionRun.update({ where: { id: run.id }, data: { status: "PAYMENTS_PREPARED" } });
+    });
+
+    const userAccount = await getRpcServer(network).getAccount(sourceAccount);
+    const setup = buildSetup({
+      network,
+      sourceAccount,
+      sourceSequence: userAccount.sequenceNumber(),
+      sponsor,
+      chunkHashes: chunks.map((c) => c.hash),
+      preAuthWeight: plan.preAuthWeight,
+      maxTime: setupMaxTime,
+    });
+    assertSetupShape(TransactionBuilder.fromXDR(setup.xdr, getNetworkPassphrase(network)) as Transaction, {
+      sourceAccount,
+      sponsorPublicKey: sponsor.publicKey(),
+      chunkHashes: chunks.map((c) => c.hash),
+      preAuthWeight: plan.preAuthWeight,
+    });
+
+    await prisma.distributionRun.update({
+      where: { id: run.id },
+      data: { setupXdr: setup.xdr, setupHash: setup.hash, setupMaxTime: setup.maxTime, status: "AWAITING_USER_SIGNATURE" },
+    });
+    return { runId: run.id, setupXdr: setup.xdr, transactionCount: chunks.length, status: "AWAITING_USER_SIGNATURE" };
+  } catch (err) {
+    // Nothing was authorized yet, so the channels are free to go back.
+    await releaseChannels(channelIds);
+    await prisma.distributionRun.update({
+      where: { id: run.id },
+      data: {
+        status: "FAILED",
+        errorCode: err instanceof DistributionError ? err.code : "PREPARE_FAILED",
+        errorMessage: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
+  }
+}
+
+/**
+ * Phase 3: accepts the wallet-signed setup, verifies it against what was
+ * persisted, wraps it in the sponsor's fee bump and records the exact
+ * envelope before anything is sent. Repeating the call after it
+ * succeeded is a no-op.
+ */
+export async function authorizeRun(runId: string, signedXdr: string, now = new Date()): Promise<DistributionRun> {
+  const run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId }, include: { transactions: true } });
+  if (run.status !== "AWAITING_USER_SIGNATURE") {
+    if (run.setupFeeBumpXdr) return run; // already authorized
+    throw new DistributionError("INVALID_STATE", `Run is ${run.status}, not waiting for a signature.`);
+  }
+  if (!run.setupXdr || !run.setupHash || !run.preAuthWeight) throw new DistributionError("INVALID_STATE", "Run has no setup.");
+
+  const sponsor = getSponsorKeypair(run.network);
+  const finalXdr = verifySignedSetup(
+    {
+      network: run.network,
+      persistedXdr: run.setupXdr,
+      persistedHash: run.setupHash,
+      sourceAccount: run.sourceAccount,
+      sponsorPublicKey: run.sponsorAccount,
+      chunkHashes: [...run.transactions].sort((a, b) => a.chunkIndex - b.chunkIndex).map((t) => t.transactionHash),
+      preAuthWeight: run.preAuthWeight,
+    },
+    signedXdr,
+    now
+  );
+  const bump = buildFeeBump({ network: run.network, sponsor, innerXdr: finalXdr, feePerOp: await feeRatePerOp(run.network) });
+
+  const claimed = await prisma.distributionRun.updateMany({
+    where: { id: runId, status: "AWAITING_USER_SIGNATURE" },
+    data: {
+      setupSignedXdr: finalXdr,
+      setupFeeBumpXdr: bump.xdr,
+      setupTxHash: bump.hash,
+      signedAt: now,
+      status: "SETUP_SUBMITTED",
+    },
+  });
+  // count 0 means a concurrent authorize won; its envelope is the one
+  // that counts, and the fresh read below returns it either way.
+  void claimed;
+  return prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+}
+
+async function acquireLease(runId: string): Promise<string | null> {
+  const owner = randomUUID();
+  const now = new Date();
+  const got = await prisma.distributionRun.updateMany({
+    where: { id: runId, OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+    data: { leaseOwner: owner, leaseUntil: new Date(now.getTime() + LEASE_MS) },
+  });
+  return got.count === 1 ? owner : null;
+}
+
+async function releaseLease(runId: string, owner: string) {
+  await prisma.distributionRun.updateMany({ where: { id: runId, leaseOwner: owner }, data: { leaseOwner: null, leaseUntil: null } });
+}
+
+async function setRunStatus(runId: string, from: DistributionRun["status"], data: Partial<DistributionRun>) {
+  return prisma.distributionRun.updateMany({ where: { id: runId, status: from }, data });
+}
+
+/**
+ * Drives a run forward from wherever it stands. Safe to call any number
+ * of times from anywhere (after authorize, on every status poll, after a
+ * restart): a lease keeps it to one worker, and every step resumes from
+ * what is persisted rather than rebuilding anything.
+ */
+export async function advanceRun(runId: string): Promise<DistributionRun> {
+  const owner = await acquireLease(runId);
+  if (!owner) return prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+  try {
+    let run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+
+    if (run.status === "SETUP_SUBMITTED") {
+      const outcome = await submitPersisted(run.network, run.setupFeeBumpXdr!);
+      if (outcome.status === "SUCCESS") {
+        await setRunStatus(runId, "SETUP_SUBMITTED", { status: "SETUP_CONFIRMED", setupConfirmedAt: new Date() });
+      } else if (outcome.status === "FAILED" || outcome.status === "REJECTED") {
+        // The setup did not apply, so no signer was installed and no chunk
+        // can ever land.
+        await failRunBeforePayments(run, outcome);
+      }
+      run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    }
+
+    if (run.status === "SETUP_CONFIRMED") {
+      await setRunStatus(runId, "SETUP_CONFIRMED", { status: "PAYMENTS_SUBMITTING" });
+      run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    }
+
+    if (run.status === "PAYMENTS_SUBMITTING") {
+      const chunks = await prisma.channelTransaction.findMany({ where: { runId }, orderBy: { chunkIndex: "asc" } });
+      const limit = pLimit(SUBMIT_CONCURRENCY);
+      await Promise.all(chunks.filter((c) => !TERMINAL_CHUNK.has(c.status)).map((c) => limit(() => processChunk(run, c))));
+      await finalizeIfDone(run);
+      run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    }
+
+    if (run.status === "AWAITING_USER_SIGNATURE" && run.setupMaxTime && run.setupMaxTime < new Date()) {
+      // The wallet never came back; nothing was installed on-chain.
+      await setRunStatus(runId, "AWAITING_USER_SIGNATURE", { status: "EXPIRED", errorCode: "SETUP_EXPIRED", completedAt: new Date() });
+      await prisma.channelTransaction.updateMany({ where: { runId }, data: { status: "EXPIRED", errorCode: "SETUP_EXPIRED" } });
+      await releaseRunChannels(runId);
+      run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    }
+    return run;
+  } finally {
+    await releaseLease(runId, owner);
+  }
+}
+
+async function failRunBeforePayments(run: DistributionRun, outcome: SubmitOutcome) {
+  await prisma.channelTransaction.updateMany({ where: { runId: run.id }, data: { status: "FAILED", errorCode: "SETUP_FAILED" } });
+  await setRunStatus(run.id, "SETUP_SUBMITTED", {
+    status: "FAILED",
+    errorCode: "SETUP_FAILED",
+    errorMessage: `Setup ${outcome.status.toLowerCase()} (${outcome.txCode ?? "unknown"}).`,
+    completedAt: new Date(),
+  });
+  await releaseRunChannels(run.id);
+}
+
+async function releaseRunChannels(runId: string) {
+  const channels = await prisma.channelAccount.findMany({ where: { runId, status: { not: "QUARANTINED" } }, select: { id: true } });
+  await releaseChannels(channels.map((c) => c.id));
+}
+
+async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
+  const network = run.network;
+  let current = chunk;
+
+  if (current.status === "PREPARED") {
+    if (current.maxTime < new Date()) {
+      await prisma.channelTransaction.update({ where: { id: current.id }, data: { status: "EXPIRED", errorCode: "txTooLate" } });
+      return;
+    }
+    const channel = await prisma.channelAccount.findUniqueOrThrow({ where: { publicKey: current.channelPublicKey } });
+    // The authorization covers one exact sequence number. If the channel
+    // moved, this transaction can never apply and must not be rebuilt.
+    const onChain = BigInt((await getRpcServer(network).getAccount(channel.publicKey)).sequenceNumber());
+    if (onChain + BigInt(1) !== BigInt(current.channelSequence)) {
+      await prisma.channelTransaction.update({
+        where: { id: current.id },
+        data: { status: "EXPIRED", errorCode: "CHANNEL_SEQUENCE_CHANGED" },
+      });
+      await quarantineChannel(channel.id, `sequence ${onChain} != expected ${BigInt(current.channelSequence) - BigInt(1)}`);
+      return;
+    }
+
+    const inner = TransactionBuilder.fromXDR(current.unsignedInnerXdr, getNetworkPassphrase(network)) as Transaction;
+    if (inner.hash().toString("hex") !== current.transactionHash) {
+      throw new DistributionError("INVALID_STATE", `Chunk ${current.chunkIndex} XDR no longer matches its authorized hash.`);
+    }
+    inner.sign(channelKeypair(channel));
+    const bump = buildFeeBump({
+      network,
+      sponsor: getSponsorKeypair(network),
+      innerXdr: inner.toXDR(),
+      feePerOp: await feeRatePerOp(network),
+    });
+    // Persist the exact envelope before it leaves, so a crash can only
+    // ever resume this envelope.
+    current = await prisma.channelTransaction.update({
+      where: { id: current.id },
+      data: {
+        feeBumpXdr: bump.xdr,
+        stellarTxHash: bump.hash,
+        status: "SUBMITTING",
+        attemptCount: { increment: 1 },
+        submittedAt: new Date(),
+      },
+    });
+    await prisma.channelAccount.update({ where: { id: channel.id }, data: { status: "SUBMITTED" } });
+  }
+
+  if (current.status !== "SUBMITTING" || !current.feeBumpXdr) return;
+  const outcome = await submitPersisted(network, current.feeBumpXdr);
+  await applyChunkOutcome(current, outcome);
+}
+
+const RETRYABLE_REJECTIONS = new Set(["txInsufficientFee", "TRY_AGAIN_LATER"]);
+
+export async function applyChunkOutcome(chunk: ChannelTransaction, outcome: SubmitOutcome) {
+  const channel = await prisma.channelAccount.findUnique({ where: { publicKey: chunk.channelPublicKey } });
+  const firstFailedOp = outcome.perOperation.find((op) => !op.success)?.code;
+
+  switch (outcome.status) {
+    case "SUCCESS":
+      await prisma.channelTransaction.update({
+        where: { id: chunk.id },
+        data: { status: "SUCCESS", resultXdr: outcome.resultXdr, confirmedAt: new Date(), errorCode: null },
+      });
+      if (channel) await releaseChannels([channel.id]);
+      return;
+    case "FAILED":
+      // Applied and failed: the sequence and the preAuthTx signer are
+      // consumed. Only a new user authorization can retry these rows.
+      await prisma.channelTransaction.update({
+        where: { id: chunk.id },
+        data: {
+          status: "REAUTHORIZATION_REQUIRED",
+          resultXdr: outcome.resultXdr,
+          confirmedAt: new Date(),
+          errorCode: firstFailedOp ?? outcome.txCode ?? "txFailed",
+        },
+      });
+      if (channel) await releaseChannels([channel.id]);
+      return;
+    case "REJECTED":
+      if (outcome.txCode && RETRYABLE_REJECTIONS.has(outcome.txCode) && chunk.maxTime > new Date()) {
+        // Never applied: try again later with a fresh fee bump around the
+        // same authorized inner transaction.
+        await prisma.channelTransaction.update({
+          where: { id: chunk.id },
+          data: { status: "PREPARED", feeBumpXdr: null, stellarTxHash: null, errorCode: outcome.txCode },
+        });
+        if (channel) await prisma.channelAccount.update({ where: { id: channel.id }, data: { status: "RESERVED" } });
+        return;
+      }
+      // Never applied and cannot be: its signer may still sit on the
+      // sender until a cleanup removes it.
+      await prisma.channelTransaction.update({
+        where: { id: chunk.id },
+        data: { status: "EXPIRED", errorCode: outcome.txCode ?? "rejected" },
+      });
+      if (channel) {
+        if (outcome.txCode === "txBadSeq") await quarantineChannel(channel.id, "txBadSeq on authorized chunk");
+        // Otherwise leave it reserved; the sweep frees it after maxTime.
+      }
+      return;
+    case "TIMEOUT":
+      if (channel) await prisma.channelAccount.update({ where: { id: channel.id }, data: { status: "AWAITING_CONFIRMATION" } });
+      return;
+  }
+}
+
+async function finalizeIfDone(run: DistributionRun) {
+  const chunks = await prisma.channelTransaction.findMany({ where: { runId: run.id }, select: { status: true } });
+  if (chunks.some((c) => !TERMINAL_CHUNK.has(c.status))) return;
+  const ok = chunks.filter((c) => c.status === "SUCCESS").length;
+  const status = ok === chunks.length ? "COMPLETED" : ok === 0 ? "FAILED" : "PARTIALLY_FAILED";
+  await setRunStatus(run.id, "PAYMENTS_SUBMITTING", { status, completedAt: new Date() });
+}
+
+export function isTerminalRun(status: DistributionRun["status"]) {
+  return TERMINAL_RUN.has(status);
+}
