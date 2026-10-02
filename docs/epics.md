@@ -64,7 +64,7 @@ Environment:
   - Reserve N channels in one DB transaction with `FOR UPDATE SKIP LOCKED`, storing `expectedSequence`, runId, lockedAt and expiresAt.
   - Release; quarantine on sequence drift; sweep expired reservations; top up.
   - Integration test against Testnet and the local DB.
-- [ ] **T1.3** `buildChunks.ts`.
+- [x] **T1.3** `buildChunks.ts`.
   - Chunk 100 ops per tx. Tx source is the channel at `expectedSequence`; every op has source U.
   - Op kinds: payment, createAccount, createClaimableBalance, claimClaimableBalance.
   - Time bounds about 15 min. Return the exact XDR and hash.
@@ -106,6 +106,7 @@ Environment:
   - U's balance of the asset covers the total.
   - U's XLM covers `createAccount` starting balances and claimable balance reserves.
   - Trustlines are authorized.
+  - Rows with a memo are refused: one transaction carries one memo, so per-recipient memos (e.g. exchange deposits) cannot be honored inside a 100-op chunk.
   - M can cover signer reserves and fees.
   - Surface each of these clearly in the API.
 - [ ] **T1.12** Testnet integration tests in `src/lib/distribution/engine.integration.test.ts` (`describe.skipIf(!!process.env.CI)`), one per test in the pasted spec:
@@ -202,3 +203,4 @@ Environment:
 - 2026-10-03 T0.4 done: migration `20261002210258_sow2_channel_engine`, additive only (no drops or column changes). Adds Batch.kind and claimExpiresAt, recipient delivery and claim fields, and the ChannelAccount, DistributionRun, ChannelTransaction and ChannelTransactionItem models, with unique indexes on run idempotency key, setup hash, tx hash and (runId, chunkIndex) so duplicates fail at the DB. lint, tsc clean; vitest 54/54.
 - 2026-10-03 T1.1 done: `authority.ts` + `errors.ts`. Free slots = 20 minus non-master signers. The wallet key's weight must reach max(low, medium, high) because the setup is sourced from U and changes signers, otherwise `UNSUPPORTED_MULTISIG`. preAuth weight = max(medium, 1). 8 unit tests + 2 Testnet tests (real thresholds, multisig rejected, missing account). vitest 64/64, lint, tsc clean.
 - 2026-10-03 T1.2 done: `channelPool.ts` covers provision (rows written as quarantined before the on-chain create, removed if the tx fails), ensurePool, reserve (`FOR UPDATE SKIP LOCKED` in one DB tx, current sequence read after locking), assign, quarantine, release, and a sweep of reservations past their tx time bounds. Starting balance is 2 XLM because channels never pay fees. `vitest.setup.ts` loads `.env` for integration tests. The bootstrap now tops the Testnet pool up to 20 (pool has 20 AVAILABLE). 4 Testnet+DB tests: concurrent reserve disjoint, refusal locks nothing, sweep. vitest 68/68, lint, tsc clean.
+- 2026-10-03 T1.3 done: `buildChunks.ts` builds one tx per 100 ops. Tx source is the channel at current+1, every op source is U, explicit maxTime, no memo. Op kinds: payment, createAccount, createClaimableBalance (recipient `beforeAbsoluteTime(expiry)`, sender `not(...)`, muxed addresses reduced to the G account) and claimClaimableBalance. Returns final XDR + hash. Inner fee is BASE_FEE per op because the sponsor fee bump pays. Decision: the legacy engine silently dropped the CSV memo, which loses funds on exchange deposits, so memo rows will be refused in T1.11 preflight (criterion added). 11 unit tests; vitest 79/79, lint, tsc clean.
