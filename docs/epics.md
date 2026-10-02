@@ -69,7 +69,7 @@ Environment:
   - Op kinds: payment, createAccount, createClaimableBalance, claimClaimableBalance.
   - Time bounds about 15 min. Return the exact XDR and hash.
   - Unit tests: hash stability, op sources, chunk boundaries (100, 101, 1000).
-- [ ] **T1.4** `buildSetup.ts`.
+- [x] **T1.4** `buildSetup.ts`.
   - Setup tx: source U, max time about 5 min.
   - Ops in order: Begin sponsoring (source M), SetOptions preAuthTx × n with the computed weight, End sponsoring (source U).
   - Signed by M. Persisted.
@@ -204,3 +204,4 @@ Environment:
 - 2026-10-03 T1.1 done: `authority.ts` + `errors.ts`. Free slots = 20 minus non-master signers. The wallet key's weight must reach max(low, medium, high) because the setup is sourced from U and changes signers, otherwise `UNSUPPORTED_MULTISIG`. preAuth weight = max(medium, 1). 8 unit tests + 2 Testnet tests (real thresholds, multisig rejected, missing account). vitest 64/64, lint, tsc clean.
 - 2026-10-03 T1.2 done: `channelPool.ts` covers provision (rows written as quarantined before the on-chain create, removed if the tx fails), ensurePool, reserve (`FOR UPDATE SKIP LOCKED` in one DB tx, current sequence read after locking), assign, quarantine, release, and a sweep of reservations past their tx time bounds. Starting balance is 2 XLM because channels never pay fees. `vitest.setup.ts` loads `.env` for integration tests. The bootstrap now tops the Testnet pool up to 20 (pool has 20 AVAILABLE). 4 Testnet+DB tests: concurrent reserve disjoint, refusal locks nothing, sweep. vitest 68/68, lint, tsc clean.
 - 2026-10-03 T1.3 done: `buildChunks.ts` builds one tx per 100 ops. Tx source is the channel at current+1, every op source is U, explicit maxTime, no memo. Op kinds: payment, createAccount, createClaimableBalance (recipient `beforeAbsoluteTime(expiry)`, sender `not(...)`, muxed addresses reduced to the G account) and claimClaimableBalance. Returns final XDR + hash. Inner fee is BASE_FEE per op because the sponsor fee bump pays. Decision: the legacy engine silently dropped the CSV memo, which loses funds on exchange deposits, so memo rows will be refused in T1.11 preflight (criterion added). 11 unit tests; vitest 79/79, lint, tsc clean.
+- 2026-10-03 T1.4 done: `buildSetup.ts` (source U, seq+1, maxTime, Begin sponsoring by M, SetOptions preAuthTx x n with the computed weight, End sponsoring, M-signed). It is a pure builder; persisting the XDR and hash is done by the engine in T1.7. Testnet proof (`buildSetup.integration.test.ts`): the sponsored signer was installed (U num_sponsored=1), a channel-signed chunk with no U signature moved U's funds, and the signer and sponsorship were gone afterwards (num_sponsored=0). 3 unit + 1 Testnet test; vitest 83/83, lint, tsc clean.
