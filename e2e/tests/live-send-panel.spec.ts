@@ -47,6 +47,11 @@ test("the live send panel follows a 150-recipient distribution to the end", asyn
   })();
 
   await approveWalletFlow(context, page, () => send.click());
+  const review = page.getByRole("region", { name: "Review before signing" });
+  await expect(review).toBeVisible({ timeout: 60_000 });
+  await expect(review.getByText("Covered by Sendall")).toBeVisible();
+  await review.screenshot({ path: `${SHOTS}/review-before-signing.png` });
+  await approveWalletFlow(context, page, () => review.getByRole("button", { name: "Approve in wallet" }).click());
   await expect(panel).toBeVisible();
 
   await expect(panel.getByText("Distribution complete")).toBeVisible({ timeout: 120_000 });

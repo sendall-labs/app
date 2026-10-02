@@ -28,11 +28,15 @@ test("a wallet-less batch can be built, then claimed and signed only at Send", a
   await appPage.getByRole("button", { name: "Next →", exact: true }).click();
   await expect(appPage.getByRole("button", { name: /Sign & send/ })).toBeVisible();
 
-  // This click is the first point a wallet is required — it should trigger
-  // connect + SIWS login + the payment signature, in that order.
+  // This click is the first point a wallet is required: it connects and
+  // signs in (SIWS), then stops at the review card. The one transaction
+  // signature comes from "Approve in wallet".
   await approveWalletFlow(context, appPage, () =>
     appPage.getByRole("button", { name: /Sign & send/ }).click()
   );
+  const approve = appPage.getByRole("button", { name: "Approve in wallet" });
+  await expect(approve).toBeVisible({ timeout: 30_000 });
+  await approveWalletFlow(context, appPage, () => approve.click());
 
   await expect(appPage.getByText("Completed", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(appPage.getByText("Sent", { exact: true })).toBeVisible();

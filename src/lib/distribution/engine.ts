@@ -531,3 +531,32 @@ export async function verifySignersCleared(runId: string) {
 export function isTerminalRun(status: DistributionRun["status"]) {
   return TERMINAL_RUN.has(status);
 }
+
+/**
+ * The sender backed out at the review step. Nothing was signed, so the
+ * run ends, its channels go straight back to the pool and its rows are
+ * ready to send again. Only possible before the setup is signed.
+ */
+export async function cancelRun(runId: string): Promise<DistributionRun> {
+  const moved = await setRunStatus(runId, "AWAITING_USER_SIGNATURE", {
+    status: "EXPIRED",
+    errorCode: "CANCELLED",
+    errorMessage: "Cancelled before signing.",
+    completedAt: new Date(),
+  });
+  if (moved.count === 0) {
+    const run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    if (run.errorCode === "CANCELLED") return run;
+    throw new DistributionError("INVALID_STATE", `Run is ${run.status}; only an unsigned run can be cancelled.`);
+  }
+  await prisma.channelTransaction.updateMany({ where: { runId }, data: { status: "EXPIRED", errorCode: "CANCELLED" } });
+  await releaseRunChannels(runId);
+  const items = await prisma.channelTransactionItem.findMany({ where: { transaction: { runId } }, select: { recipientId: true } });
+  await prisma.channelTransactionItem.updateMany({ where: { transaction: { runId } }, data: { status: "EXPIRED", resultCode: "CANCELLED" } });
+  await prisma.recipient.updateMany({ where: { id: { in: items.map((i) => i.recipientId) } }, data: { status: "READY", errorMessage: null } });
+  const run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+  if (run.purpose === "SEND" || run.purpose === "REAUTHORIZE") {
+    await prisma.batch.update({ where: { id: run.batchId }, data: { status: "READY" } });
+  }
+  return run;
+}

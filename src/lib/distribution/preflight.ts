@@ -43,7 +43,7 @@ export async function runPreflight(params: {
   // deposit.
   for (const r of rows) {
     if (r.memo && r.memo.trim()) {
-      problems.push({ code: "MEMO_UNSUPPORTED", recipientId: r.recipientId, message: "Rows with a memo cannot be sent in bulk. Remove the memo or send this row on its own." });
+      problems.push({ code: "MEMO_UNSUPPORTED", recipientId: r.recipientId, message: "Rows with a memo cannot be sent in bulk. Remove the memo, or send this row from your wallet directly." });
     }
   }
 

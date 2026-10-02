@@ -164,11 +164,15 @@ export function DistributionProgress({
   run,
   transactionCount,
   onDismiss,
+  onSendFailedAgain,
+  onCleanup,
 }: {
   phase: RunPhase;
   run: RunView | null;
   transactionCount: number;
   onDismiss?: () => void;
+  onSendFailedAgain?: () => void;
+  onCleanup?: () => void;
 }) {
   const stages = stagesFor(phase, run);
   const elapsed = useElapsed(run);
@@ -253,6 +257,30 @@ export function DistributionProgress({
             <Lane key={tx.chunkIndex} tx={tx} network={run!.network} />
           ))}
         </ul>
+      )}
+
+      {ended && !ok && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-sidebar px-4 py-3">
+          <p className="text-sm text-ink">
+            {run!.cleanupRequired
+              ? "Some transactions were never sent, so their temporary signers are still on your account. Remove them with one more signature."
+              : run!.recipients.failed > 0
+                ? `${run!.recipients.failed} row${run!.recipients.failed === 1 ? " was" : "s were"} not delivered. They need a new approval to go out again.`
+                : (run!.errorMessage ?? "The distribution did not go through.")}
+          </p>
+          <div className="flex gap-2">
+            {run!.cleanupRequired && onCleanup && (
+              <button type="button" onClick={onCleanup} className="cursor-pointer rounded-full border border-hairline bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-paper">
+                Remove leftover signers
+              </button>
+            )}
+            {run!.recipients.failed > 0 && onSendFailedAgain && (
+              <button type="button" onClick={onSendFailedAgain} className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white">
+                Send failed rows again
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {run?.setup.txHash && (

@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunView } from "@/lib/distribution/batchRuns";
 
-export type RunPhase = "idle" | "preparing" | "awaiting-signature" | "authorizing" | "running" | "done" | "error";
+// idle -> preparing -> review -> awaiting-signature -> authorizing -> running -> done
+// A wallet rejection goes back to review; anything that stops the flow
+// before signing ends in "error".
+export type RunPhase = "idle" | "preparing" | "review" | "awaiting-signature" | "authorizing" | "running" | "done" | "error";
 
 export type PreparedSummary = {
   recipientCount: number;
@@ -11,6 +14,25 @@ export type PreparedSummary = {
   asset: string;
   network: string;
   kind: string;
+};
+
+export type PreflightInfo = {
+  baseReserve: string;
+  senderNativeNeeded: string;
+  senderAssetNeeded: string | null;
+  claimableReserve: string;
+  sponsorNeeded: string;
+};
+
+export type ReviewInfo = {
+  runId: string;
+  setupXdr: string;
+  purpose: "SEND" | "REAUTHORIZE" | "CLEANUP";
+  transactionCount: number;
+  summary: PreparedSummary | null;
+  preflight: PreflightInfo | null;
+  signerCount?: number; // cleanup only
+  expiresAt: number;
 };
 
 export type RunProblem = { code: string; message: string; recipientId?: string };
@@ -36,11 +58,13 @@ async function postJson(url: string, body: unknown) {
 }
 
 const POLL_MS = 1000;
+const SETUP_WINDOW_MS = 5 * 60 * 1000;
 
 /**
- * Client side of the channel engine: prepare, one wallet signature,
- * authorize, then follow the run until it ends. Polling also drives the
- * engine on the server, so keeping this page open keeps the run moving.
+ * Client side of the channel engine: prepare and review, one wallet
+ * signature, authorize, then follow the run until it ends. Polling also
+ * drives the engine on the server, so keeping this page open keeps the
+ * run moving.
  */
 export function useDistributionRun(params: {
   signTransaction: (xdr: string) => Promise<string>;
@@ -51,8 +75,7 @@ export function useDistributionRun(params: {
   const { signTransaction, ensureClaimed, onFinished, onError } = params;
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [run, setRun] = useState<RunView | null>(null);
-  const [summary, setSummary] = useState<PreparedSummary | null>(null);
-  const [transactionCount, setTransactionCount] = useState(0);
+  const [review, setReview] = useState<ReviewInfo | null>(null);
   const [error, setError] = useState<RunRequestError | null>(null);
   const runIdRef = useRef<string | null>(null);
   const finishedRef = useRef(onFinished);
@@ -62,66 +85,104 @@ export function useDistributionRun(params: {
     errorRef.current = onError;
   }, [onFinished, onError]);
 
-  const signAndAuthorize = useCallback(
-    async (runId: string, setupXdr: string) => {
-      setPhase("awaiting-signature");
-      let signed: string;
-      try {
-        signed = await signTransaction(setupXdr);
-      } catch {
-        throw new RunRequestError("The wallet did not approve. Nothing was sent.", "WALLET_REJECTED");
-      }
-      setPhase("authorizing");
-      const { run: view } = await postJson(`/api/runs/${runId}/authorize`, { signedXdr: signed });
-      setRun(view);
-      setPhase("running");
-    },
-    [signTransaction]
-  );
-
   const fail = useCallback((err: unknown) => {
-    const error = err instanceof RunRequestError ? err : new RunRequestError(err instanceof Error ? err.message : "Send failed");
-    setError(error);
+    const e = err instanceof RunRequestError ? err : new RunRequestError(err instanceof Error ? err.message : "Send failed");
+    setError(e);
     setPhase("error");
-    errorRef.current?.(error);
+    errorRef.current?.(e);
   }, []);
 
-  /** Starts (or resumes) a run for the batch's ready rows. */
-  const start = useCallback(
+  const toReview = useCallback((info: ReviewInfo) => {
+    runIdRef.current = info.runId;
+    setReview(info);
+    setRun(null);
+    setError(null);
+    setPhase("review");
+  }, []);
+
+  /** Prepares a run for the batch's ready rows and stops at the review step. */
+  const prepare = useCallback(
     async (batchId: string) => {
       setError(null);
       setPhase("preparing");
       try {
         await ensureClaimed();
-        let prepared: { runId: string; setupXdr: string; transactionCount: number; summary: PreparedSummary };
         try {
-          prepared = await postJson(`/api/batches/${batchId}/runs`, { idempotencyKey: crypto.randomUUID() });
+          const p = await postJson(`/api/batches/${batchId}/runs`, { idempotencyKey: crypto.randomUUID() });
+          toReview({
+            runId: p.runId,
+            setupXdr: p.setupXdr,
+            purpose: "SEND",
+            transactionCount: p.transactionCount,
+            summary: p.summary,
+            preflight: p.preflight,
+            expiresAt: Date.now() + SETUP_WINDOW_MS,
+          });
         } catch (err) {
-          // A run is already waiting for this batch (e.g. after a reload):
-          // pick it up instead of starting another.
+          // A run for this batch is already waiting or in flight (e.g. after
+          // a reload): pick it up instead of starting another.
           if (err instanceof RunRequestError && err.code === "INVALID_STATE" && err.runId) {
-            const { run: existing } = await (await fetch(`/api/runs/${err.runId}`)).json();
-            runIdRef.current = existing.id;
-            setRun(existing);
+            const { run: existing } = (await (await fetch(`/api/runs/${err.runId}`)).json()) as { run: RunView & { setupXdr: string | null } };
             if (existing.status === "AWAITING_USER_SIGNATURE" && existing.setupXdr) {
-              await signAndAuthorize(existing.id, existing.setupXdr);
+              toReview({
+                runId: existing.id,
+                setupXdr: existing.setupXdr,
+                purpose: existing.purpose === "REAUTHORIZE" ? "REAUTHORIZE" : "SEND",
+                transactionCount: existing.transactions.length,
+                summary: null,
+                preflight: null,
+                expiresAt: existing.setup.expiresAt ? new Date(existing.setup.expiresAt).getTime() : Date.now() + SETUP_WINDOW_MS,
+              });
             } else {
+              runIdRef.current = existing.id;
+              setRun(existing);
               setPhase("running");
             }
             return;
           }
           throw err;
         }
-        runIdRef.current = prepared.runId;
-        setSummary(prepared.summary);
-        setTransactionCount(prepared.transactionCount);
-        await signAndAuthorize(prepared.runId, prepared.setupXdr);
       } catch (err) {
         fail(err);
       }
     },
-    [ensureClaimed, signAndAuthorize, fail]
+    [ensureClaimed, toReview, fail]
   );
+
+  /** The one wallet signature. A rejection returns to the review step. */
+  const approve = useCallback(async () => {
+    if (!review) return;
+    setError(null);
+    setPhase("awaiting-signature");
+    let signed: string;
+    try {
+      signed = await signTransaction(review.setupXdr);
+    } catch {
+      const e = new RunRequestError("The wallet did not approve. Nothing was sent; you can approve again or cancel.", "WALLET_REJECTED");
+      setError(e);
+      setPhase("review");
+      return;
+    }
+    try {
+      setPhase("authorizing");
+      const { run: view } = await postJson(`/api/runs/${review.runId}/authorize`, { signedXdr: signed });
+      setRun(view);
+      setPhase("running");
+    } catch (err) {
+      fail(err);
+    }
+  }, [review, signTransaction, fail]);
+
+  /** Backs out at the review step; the rows become ready again. */
+  const cancel = useCallback(async () => {
+    const r = review;
+    setReview(null);
+    setError(null);
+    setPhase("idle");
+    if (r && r.purpose !== "CLEANUP") {
+      await fetch(`/api/runs/${r.runId}/cancel`, { method: "POST" }).catch(() => {});
+    }
+  }, [review]);
 
   /** New authorization for the rows a finished run could not deliver. */
   const reauthorize = useCallback(
@@ -131,33 +192,49 @@ export function useDistributionRun(params: {
       try {
         await ensureClaimed();
         const next = await postJson(`/api/runs/${previousRunId}/reauthorize`, { idempotencyKey: crypto.randomUUID() });
-        runIdRef.current = next.runId;
-        setTransactionCount(next.transactionCount);
-        await signAndAuthorize(next.runId, next.setupXdr);
+        toReview({
+          runId: next.runId,
+          setupXdr: next.setupXdr,
+          purpose: "REAUTHORIZE",
+          transactionCount: next.transactionCount,
+          summary: null,
+          preflight: null,
+          expiresAt: Date.now() + SETUP_WINDOW_MS,
+        });
       } catch (err) {
         fail(err);
       }
     },
-    [ensureClaimed, signAndAuthorize, fail]
+    [ensureClaimed, toReview, fail]
   );
 
   /** Removes signers a run left behind (one extra signature, rare). */
   const cleanup = useCallback(
     async (runId: string) => {
       setError(null);
+      setPhase("preparing");
       try {
         await ensureClaimed();
         const plan = await postJson(`/api/runs/${runId}/cleanup`, {});
-        if (plan.clean) return true;
-        runIdRef.current = plan.cleanupRunId;
-        await signAndAuthorize(plan.cleanupRunId, plan.setupXdr);
-        return true;
+        if (plan.clean) {
+          setPhase("idle");
+          return;
+        }
+        toReview({
+          runId: plan.cleanupRunId,
+          setupXdr: plan.setupXdr,
+          purpose: "CLEANUP",
+          transactionCount: 0,
+          summary: null,
+          preflight: null,
+          signerCount: plan.signerCount,
+          expiresAt: Date.now() + SETUP_WINDOW_MS,
+        });
       } catch (err) {
         fail(err);
-        return false;
       }
     },
-    [ensureClaimed, signAndAuthorize, fail]
+    [ensureClaimed, toReview, fail]
   );
 
   /** Follow an existing run, e.g. one already in flight when the page opened. */
@@ -169,6 +246,7 @@ export function useDistributionRun(params: {
   useEffect(() => {
     if (phase !== "running") return;
     let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       const id = runIdRef.current;
       if (!id || stopped) return;
@@ -189,7 +267,7 @@ export function useDistributionRun(params: {
       }
       if (!stopped) timer = setTimeout(tick, POLL_MS);
     };
-    let timer = setTimeout(tick, 0);
+    timer = setTimeout(tick, 0);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -199,7 +277,22 @@ export function useDistributionRun(params: {
   const reset = useCallback(() => {
     setPhase("idle");
     setError(null);
+    setReview(null);
+    setRun(null);
   }, []);
 
-  return { phase, run, summary, transactionCount, error, start, reauthorize, cleanup, watch, reset };
+  return {
+    phase,
+    run,
+    review,
+    transactionCount: review?.transactionCount ?? run?.transactions.length ?? 0,
+    error,
+    prepare,
+    approve,
+    cancel,
+    reauthorize,
+    cleanup,
+    watch,
+    reset,
+  };
 }

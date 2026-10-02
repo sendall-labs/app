@@ -11,6 +11,7 @@ import { explorerAccountUrl, explorerTxUrl } from "@/lib/stellar/explorer";
 import { formatAmount, sumAmounts } from "@/lib/format";
 import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
 import { DistributionProgress } from "@/components/distribution/DistributionProgress";
+import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
 
 // "channels" (default): one wallet signature, chunks sent in parallel by
 // the channel engine. "legacy": the Phase 1 sequential sender, kept as
@@ -18,7 +19,8 @@ import { DistributionProgress } from "@/components/distribution/DistributionProg
 const SEND_ENGINE = process.env.NEXT_PUBLIC_SEND_ENGINE === "legacy" ? "legacy" : "channels";
 
 const PHASE_LABEL: Partial<Record<RunPhase, string>> = {
-  preparing: "Preparing…",
+  preparing: "Checking…",
+  review: "Review below",
   "awaiting-signature": "Approve in your wallet…",
   authorizing: "Authorizing…",
   running: "Sending…",
@@ -535,17 +537,17 @@ export default function BatchReviewPage() {
       else if (run.status === "PARTIALLY_FAILED") toast.warning("Some rows were not delivered. You can send them again.");
       else toast.error(run.errorMessage ?? "The distribution did not go through.");
     },
-    // A failed start (preflight problems, wallet rejection): reload so
-    // rows flagged by preflight show their reason.
-    onError: (err) => {
-      toast.error(err.message);
+    // A failed start (e.g. preflight problems): reload so the rows it
+    // flagged show their reason; the problems card lists them too.
+    onError: () => {
       void load();
     },
   });
-  const distributionActive = ["preparing", "awaiting-signature", "authorizing", "running"].includes(distribution.phase);
+  const distributionActive = ["preparing", "review", "awaiting-signature", "authorizing", "running"].includes(distribution.phase);
 
   // Re-attach to a run that is still in flight when the page opens.
   const { watch: watchRun, phase: distributionPhase } = distribution;
+  const cleanupRunId = batch?.runs?.find((r) => r.errorCode === "CLEANUP_REQUIRED")?.id;
   const inFlightRunId = batch?.runs?.find((r) => r.signedAt && ["SETUP_SUBMITTED", "SETUP_CONFIRMED", "PAYMENTS_SUBMITTING"].includes(r.status))?.id;
   useEffect(() => {
     if (inFlightRunId && distributionPhase === "idle") watchRun(inFlightRunId);
@@ -553,7 +555,7 @@ export default function BatchReviewPage() {
 
   const prepareAndSend = useCallback(async () => {
     if (SEND_ENGINE === "channels") {
-      await distribution.start(batchId);
+      await distribution.prepare(batchId);
       return;
     }
     setBulkBusy("send");
@@ -797,13 +799,52 @@ export default function BatchReviewPage() {
         />
       )}
 
-      {distribution.phase !== "idle" && distribution.phase !== "error" && (
+      {distribution.phase === "error" && distribution.error && (
+        <PreflightProblems
+          error={distribution.error}
+          rowNumberOf={(id) => {
+            // The table numbers rows by position, not by their CSV line.
+            const i = batch.recipients.findIndex((x) => x.id === id);
+            return i >= 0 ? i + 1 : undefined;
+          }}
+          onDismiss={distribution.reset}
+        />
+      )}
+
+      {distribution.phase === "review" && distribution.review && (
+        <SendReviewCard
+          review={distribution.review}
+          error={distribution.error}
+          busy={false}
+          onApprove={distribution.approve}
+          onCancel={() => void distribution.cancel().then(load)}
+        />
+      )}
+
+      {["preparing", "awaiting-signature", "authorizing", "running", "done"].includes(distribution.phase) && (
         <DistributionProgress
           phase={distribution.phase}
           run={distribution.run}
           transactionCount={distribution.transactionCount}
           onDismiss={distribution.reset}
+          onSendFailedAgain={distribution.run ? () => void distribution.reauthorize(distribution.run!.id) : undefined}
+          onCleanup={distribution.run ? () => void distribution.cleanup(distribution.run!.id) : undefined}
         />
+      )}
+
+      {distribution.phase === "idle" && cleanupRunId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning-soft px-5 py-3">
+          <p className="text-sm text-warning">
+            A past distribution left temporary signers on your account. They cannot move funds on their own, but they hold signer slots.
+          </p>
+          <button
+            type="button"
+            onClick={() => void distribution.cleanup(cleanupRunId)}
+            className="cursor-pointer rounded-full border border-hairline bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-paper"
+          >
+            Remove leftover signers
+          </button>
+        </div>
       )}
 
       {displayedStage === "confirm" && (
