@@ -14,6 +14,7 @@ import { DistributionProgress } from "@/components/distribution/DistributionProg
 import { KindBadge } from "@/components/batches/KindBadge";
 import { KindSwitch } from "@/components/batches/KindSwitch";
 import { ClaimWindowPicker } from "@/components/batches/ClaimWindowPicker";
+import { ClaimPill, ClaimStatusCard, type ClaimSummaryView } from "@/components/distribution/ClaimStatusCard";
 import { isConvertible } from "@/lib/distribution/convertRules";
 import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
 
@@ -43,6 +44,9 @@ type Recipient = {
   hasTrustline: boolean | null;
   status: string;
   errorMessage: string | null;
+  claimStatus?: "UNCLAIMED" | "CLAIMED" | "RECLAIMED" | null;
+  claimTxHash?: string | null;
+  claimableBalanceId?: string | null;
   channelItems?: { status: string; resultCode: string | null; transaction: { stellarTxHash: string | null; transactionHash: string } }[];
 };
 
@@ -578,6 +582,29 @@ export default function BatchReviewPage() {
     [batchId, load]
   );
 
+  const [claims, setClaims] = useState<ClaimSummaryView | null>(null);
+  const [syncingClaims, setSyncingClaims] = useState(false);
+  const syncClaims = useCallback(async () => {
+    setSyncingClaims(true);
+    try {
+      const res = await fetch(`/api/batches/${batchId}/claims/sync`, { method: "POST" });
+      if (!res.ok) return;
+      setClaims((await res.json()).claims);
+      await load();
+    } finally {
+      setSyncingClaims(false);
+    }
+  }, [batchId, load]);
+  const hasBalances = !!batch?.recipients.some((r) => r.claimableBalanceId);
+  const claimsSyncedRef = useRef(false);
+  useEffect(() => {
+    // Once per visit: read claim progress from the network.
+    if (!hasBalances || claimsSyncedRef.current) return;
+    claimsSyncedRef.current = true;
+    const timer = setTimeout(() => void syncClaims(), 0);
+    return () => clearTimeout(timer);
+  }, [hasBalances, syncClaims]);
+
   const convertFailed = useCallback(async () => {
     setBulkBusy("convert");
     try {
@@ -1014,6 +1041,10 @@ export default function BatchReviewPage() {
         </div>
       )}
 
+      {displayedStage === "send" && claims && claims.created > 0 && (
+        <ClaimStatusCard summary={claims} syncing={syncingClaims} onRefresh={() => void syncClaims()} />
+      )}
+
       {displayedStage === "send" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap justify-end gap-2">
@@ -1368,6 +1399,11 @@ function RecipientsTable({
                     >
                       view tx ↗
                     </a>
+                  )}
+                  {r.claimStatus && (
+                    <span className="ml-2 inline-block align-middle">
+                      <ClaimPill status={r.claimStatus} href={r.claimTxHash ? explorerTxUrl(batch.network, r.claimTxHash) : null} />
+                    </span>
                   )}
                 </td>
                 <td className="px-3 py-3">

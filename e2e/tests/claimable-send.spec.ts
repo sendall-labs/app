@@ -39,5 +39,12 @@ test("a claimable balance distribution goes out with one signature", async ({ co
   const panel = page.getByRole("region", { name: "Distribution progress" });
   await expect(panel.getByText("Distribution complete")).toBeVisible({ timeout: 90_000 });
   await expect(panel.getByText("3 of 3 delivered on Testnet")).toBeVisible();
+  const claims = page.getByRole("region", { name: "Claim status" });
+  await expect(claims.getByText("Claimed 0 of 3")).toBeVisible({ timeout: 60_000 });
+  await expect(claims.getByText(/left to claim/)).toBeVisible();
+  await expect(page.getByText("Unclaimed").first()).toBeVisible();
+  // Keep notification toasts out of the evidence screenshots.
+  await page.addStyleTag({ content: "[data-sonner-toaster]{display:none !important}" });
+  await claims.screenshot({ path: `${SHOTS}/claim-status.png` });
   await page.screenshot({ path: `${SHOTS}/claimable-sent.png`, fullPage: true });
 });
