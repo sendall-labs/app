@@ -14,7 +14,13 @@ export async function fundedAccount(): Promise<Keypair> {
   return kp;
 }
 
-export async function seedBatch(owner: string, destinations: string[], kind: BatchKind = "PAYMENT", amount = "1") {
+export async function seedBatch(
+  owner: string,
+  destinations: string[],
+  kind: BatchKind = "PAYMENT",
+  amount = "1",
+  extra: { accountExists?: boolean; assetCode?: string; assetIssuer?: string; claimExpiresAt?: Date } = {}
+) {
   return prisma.batch.create({
     data: {
       network: TESTNET,
@@ -22,8 +28,18 @@ export async function seedBatch(owner: string, destinations: string[], kind: Bat
       sourceAccount: owner,
       status: "READY",
       kind,
+      assetCode: extra.assetCode,
+      assetIssuer: extra.assetIssuer,
+      claimExpiresAt: extra.claimExpiresAt,
       recipients: {
-        create: destinations.map((destination, i) => ({ rowIndex: i, destination, amount, addressValid: true, status: "READY" as const })),
+        create: destinations.map((destination, i) => ({
+          rowIndex: i,
+          destination,
+          amount,
+          addressValid: true,
+          accountExists: extra.accountExists,
+          status: "READY" as const,
+        })),
       },
     },
     include: { recipients: { orderBy: { rowIndex: "asc" } } },
@@ -44,3 +60,19 @@ export async function driveToEnd(runId: string, maxSteps = 8) {
   }
   return run;
 }
+
+/** Submits a classic transaction signed by `signer` (test setup only). */
+export async function submitAs(signer: Keypair, build: (b: import("@stellar/stellar-sdk").TransactionBuilder) => void) {
+  const { getRpcServer } = await import("@/lib/stellar/client");
+  const { submitAndPoll } = await import("@/lib/stellar/submit");
+  const account = await getRpcServer(TESTNET).getAccount(signer.publicKey());
+  const builder = new TransactionBuilder(account, { fee: "1000", networkPassphrase: getNetworkPassphrase(TESTNET) }).setTimeout(120);
+  build(builder);
+  const tx = builder.build();
+  tx.sign(signer);
+  const res = await submitAndPoll(TESTNET, tx.toXDR());
+  if (res.status !== "SUCCESS") throw new Error(`test setup tx failed: ${JSON.stringify(res.perOperation)}`);
+  return res;
+}
+
+export const randomKeys = (n: number) => Array.from({ length: n }, () => Keypair.random().publicKey());

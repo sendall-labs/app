@@ -4,7 +4,8 @@ import { Asset, TransactionBuilder, type Transaction } from "@stellar/stellar-sd
 import type { ChannelTransaction, DistributionRun } from "@/generated/prisma/client";
 import type { Network, RunPurpose } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db/prisma";
-import { getNetworkPassphrase, getRpcServer } from "@/lib/stellar/client";
+import { getHorizonServer, getNetworkPassphrase, getRpcServer } from "@/lib/stellar/client";
+import { MAX_OPS_PER_TX } from "@/lib/stellar/txBuilder";
 import { getSponsorKeypair, isSponsorConfigured } from "@/lib/stellar/serviceAccounts";
 import { loadAccountAuthority, planAuthority } from "./authority";
 import { buildChunks, chunkCount, type DistributionOp } from "./buildChunks";
@@ -27,7 +28,24 @@ export const CHUNK_TTL_SECONDS = 15 * 60;
 // pre-authorized transaction can never apply.
 const CHANNEL_GRACE_MS = 60_000;
 const LEASE_MS = 90_000;
-const SUBMIT_CONCURRENCY = Number(process.env.SUBMIT_CONCURRENCY ?? 10);
+/**
+ * How many chunks may be in flight at once. A ledger only takes so many
+ * operations (Testnet 200, Mainnet 1,000), and stellar-core drops a
+ * transaction that waits in its queue for a few ledgers, then bans it for
+ * a while. Flooding the queue therefore makes a run slower, so the
+ * window follows the network's per-ledger capacity in whole chunks.
+ */
+export async function submitWindow(network: Network): Promise<number> {
+  const override = Number(process.env.SUBMIT_CONCURRENCY);
+  if (override > 0) return override;
+  try {
+    const page = await getHorizonServer(network).ledgers().order("desc").limit(1).call();
+    const capacity = Number(page.records[0].max_tx_set_size);
+    return Math.max(2, Math.floor(capacity / MAX_OPS_PER_TX));
+  } catch {
+    return 2;
+  }
+}
 
 const TERMINAL_CHUNK = new Set(["SUCCESS", "FAILED", "REAUTHORIZATION_REQUIRED", "EXPIRED"]);
 const TERMINAL_RUN = new Set(["COMPLETED", "PARTIALLY_FAILED", "FAILED", "EXPIRED"]);
@@ -258,6 +276,13 @@ async function setRunStatus(runId: string, from: DistributionRun["status"], data
 export async function advanceRun(runId: string): Promise<DistributionRun> {
   const owner = await acquireLease(runId);
   if (!owner) return prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+  // A pass can outlive one lease period on a congested network; keep the
+  // lease while this worker is alive so no second worker joins in.
+  const heartbeat = setInterval(() => {
+    prisma.distributionRun
+      .updateMany({ where: { id: runId, leaseOwner: owner }, data: { leaseUntil: new Date(Date.now() + LEASE_MS) } })
+      .catch(() => {});
+  }, LEASE_MS / 3);
   try {
     let run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
 
@@ -295,7 +320,7 @@ export async function advanceRun(runId: string): Promise<DistributionRun> {
 
     if (run.status === "PAYMENTS_SUBMITTING") {
       const chunks = await prisma.channelTransaction.findMany({ where: { runId }, orderBy: { chunkIndex: "asc" } });
-      const limit = pLimit(SUBMIT_CONCURRENCY);
+      const limit = pLimit(await submitWindow(run.network));
       await Promise.all(chunks.filter((c) => !TERMINAL_CHUNK.has(c.status)).map((c) => limit(() => processChunk(run, c))));
       await finalizeIfDone(run);
       run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
@@ -311,6 +336,7 @@ export async function advanceRun(runId: string): Promise<DistributionRun> {
     }
     return run;
   } finally {
+    clearInterval(heartbeat);
     await releaseLease(runId, owner);
   }
 }
@@ -332,7 +358,27 @@ async function releaseRunChannels(runId: string) {
   await releaseChannels(channels.map((c) => c.id));
 }
 
+const RETRY_PAUSE_MS = 2_500;
+const MAX_FEE_ATTEMPTS = 12;
+
+/**
+ * Takes one chunk as far as it can go in this pass. When the network
+ * pushes back (fee too low for a full ledger, queue full, not seen yet),
+ * the chunk retries on its own schedule within its time bounds instead
+ * of waiting for the slowest chunk of the run.
+ */
 async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
+  let current = chunk;
+  for (let round = 0; ; round++) {
+    current = await stepChunk(run, current);
+    if (current.status !== "PREPARED" && current.status !== "SUBMITTING") return;
+    if (current.status === "PREPARED" && current.attemptCount >= MAX_FEE_ATTEMPTS) return;
+    if (current.maxTime.getTime() - Date.now() < 10_000) return; // let expiry handling take over
+    await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
+  }
+}
+
+async function stepChunk(run: DistributionRun, chunk: ChannelTransaction): Promise<ChannelTransaction> {
   const network = run.network;
   let current = chunk;
 
@@ -340,7 +386,7 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
     if (current.maxTime < new Date()) {
       await prisma.channelTransaction.update({ where: { id: current.id }, data: { status: "EXPIRED", errorCode: "txTooLate" } });
       await reconcileChunkById(current.id);
-      return;
+      return prisma.channelTransaction.findUniqueOrThrow({ where: { id: current.id } });
     }
     const channel = await prisma.channelAccount.findUniqueOrThrow({ where: { publicKey: current.channelPublicKey } });
     // The authorization covers one exact sequence number. If the channel
@@ -353,7 +399,7 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
       });
       await quarantineChannel(channel.id, `sequence ${onChain} != expected ${BigInt(current.channelSequence) - BigInt(1)}`);
       await reconcileChunkById(current.id);
-      return;
+      return prisma.channelTransaction.findUniqueOrThrow({ where: { id: current.id } });
     }
 
     const inner = TransactionBuilder.fromXDR(current.unsignedInnerXdr, getNetworkPassphrase(network)) as Transaction;
@@ -361,11 +407,13 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
       throw new DistributionError("INVALID_STATE", `Chunk ${current.chunkIndex} XDR no longer matches its authorized hash.`);
     }
     inner.sign(channelKeypair(channel));
+    // Only the fee bump around the authorized inner transaction changes
+    // between attempts; its bid escalates after each fee rejection.
     const bump = buildFeeBump({
       network,
       sponsor: getSponsorKeypair(network),
       innerXdr: inner.toXDR(),
-      feePerOp: await feeRatePerOp(network),
+      feePerOp: await feeRatePerOp(network, current.attemptCount),
     });
     // Persist the exact envelope before it leaves, so a crash can only
     // ever resume this envelope.
@@ -376,16 +424,17 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
         stellarTxHash: bump.hash,
         status: "SUBMITTING",
         attemptCount: { increment: 1 },
-        submittedAt: new Date(),
+        submittedAt: current.submittedAt ?? new Date(),
       },
     });
     await prisma.channelAccount.update({ where: { id: channel.id }, data: { status: "SUBMITTED" } });
   }
 
-  if (current.status !== "SUBMITTING" || !current.feeBumpXdr) return;
+  if (current.status !== "SUBMITTING" || !current.feeBumpXdr) return current;
   const outcome = await submitPersisted(network, current.feeBumpXdr);
   await applyChunkOutcome(current, outcome);
   await reconcileChunkById(current.id);
+  return prisma.channelTransaction.findUniqueOrThrow({ where: { id: current.id } });
 }
 
 const RETRYABLE_REJECTIONS = new Set(["txInsufficientFee", "TRY_AGAIN_LATER"]);

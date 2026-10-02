@@ -27,17 +27,25 @@ export type SubmitOutcome = {
   perOperation: OpResult[];
 };
 
-/** Per-operation bid from recent network fees (p90), clamped to [BASE_FEE, cap]. */
-export async function feeRatePerOp(network: Network): Promise<string> {
+/**
+ * Per-operation bid. A distribution fills ledgers, so bidding the median
+ * loses to surge pricing: chunks bid twice the recent p99 (at least ten
+ * times the base fee) and double on each retry after a fee rejection,
+ * never above the cap. Unused bid is not charged: the network charges
+ * the ledger's effective rate, not the bid.
+ */
+export async function feeRatePerOp(network: Network, attempt = 0): Promise<string> {
+  const floor = BigInt(BASE_FEE) * BigInt(10);
+  let rate = floor;
   try {
     const stats = await getRpcServer(network).getFeeStats();
-    const p90 = BigInt(stats.inclusionFee.p90);
-    const floor = BigInt(BASE_FEE);
-    const rate = p90 < floor ? floor : p90 > FEE_CAP_PER_OP ? FEE_CAP_PER_OP : p90;
-    return rate.toString();
+    const p99 = BigInt(stats.inclusionFee.p99) * BigInt(2);
+    if (p99 > rate) rate = p99;
   } catch {
-    return BASE_FEE;
+    // keep the floor
   }
+  rate = rate * BigInt(2) ** BigInt(Math.min(attempt, 10));
+  return (rate > FEE_CAP_PER_OP ? FEE_CAP_PER_OP : rate).toString();
 }
 
 /** Wraps a fully signed inner transaction so the sponsor pays its fee. */
