@@ -5,6 +5,7 @@
 // - Generates SERVICE_KEY_ENCRYPTION_KEY if missing.
 // - Generates the Testnet sponsor account (M) if missing and funds it
 //   from friendbot. Tops it up from friendbot when it runs low.
+// - Tops the Testnet channel pool up to CHANNEL_POOL_SIZE (default 20).
 // - Writes new values to .env (gitignored). Existing values are never
 //   overwritten, so re-running is safe.
 //
@@ -65,6 +66,12 @@ async function main() {
     balance = await nativeBalance(horizon, sponsor.publicKey());
   }
   console.log(`sponsor (M) ${sponsor.publicKey()} balance ${balance} XLM`);
+
+  // Imported late: the pool module reads the env (DB URL, encryption
+  // key) at import time, which only exists after the steps above.
+  const { ensurePool, DEFAULT_POOL_SIZE } = await import("@/lib/distribution/channelPool");
+  const added = await ensurePool("TESTNET");
+  console.log(`channel pool: ${added} added, target ${DEFAULT_POOL_SIZE}`);
 }
 
 main().catch((err) => {

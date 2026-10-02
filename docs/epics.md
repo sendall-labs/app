@@ -59,7 +59,7 @@ Environment:
   - `preAuthWeight = max(med, 1)`.
   - Reject with `INSUFFICIENT_SIGNER_SLOTS` or `UNSUPPORTED_MULTISIG` (master weight below high threshold).
   - Unit tests: default account, custom thresholds, full signer list.
-- [ ] **T1.2** `channelPool.ts`.
+- [x] **T1.2** `channelPool.ts`.
   - Provision channels from M (minimal balance; fees come from fee bumps).
   - Reserve N channels in one DB transaction with `FOR UPDATE SKIP LOCKED`, storing `expectedSequence`, runId, lockedAt and expiresAt.
   - Release; quarantine on sequence drift; sweep expired reservations; top up.
@@ -201,3 +201,4 @@ Environment:
 - 2026-10-02 T0.3 done: AES-256-GCM `serviceKeys.ts` (v1 format, tamper and wrong-key tests), `serviceAccounts.ts` (sponsor M from `SPONSOR_SECRET_<NETWORK>`), `npm run bootstrap:testnet` (idempotent; generated the encryption key and Testnet M `GDJDV3NU…UNQT`, funded 10,000 XLM). Decision: sponsor secret lives in host env, channel secrets will be encrypted in DB. Channel provisioning gets added to the script in T1.2. Added `tsx` dev dependency for scripts. lint, tsc clean; vitest 54/54.
 - 2026-10-03 T0.4 done: migration `20261002210258_sow2_channel_engine`, additive only (no drops or column changes). Adds Batch.kind and claimExpiresAt, recipient delivery and claim fields, and the ChannelAccount, DistributionRun, ChannelTransaction and ChannelTransactionItem models, with unique indexes on run idempotency key, setup hash, tx hash and (runId, chunkIndex) so duplicates fail at the DB. lint, tsc clean; vitest 54/54.
 - 2026-10-03 T1.1 done: `authority.ts` + `errors.ts`. Free slots = 20 minus non-master signers. The wallet key's weight must reach max(low, medium, high) because the setup is sourced from U and changes signers, otherwise `UNSUPPORTED_MULTISIG`. preAuth weight = max(medium, 1). 8 unit tests + 2 Testnet tests (real thresholds, multisig rejected, missing account). vitest 64/64, lint, tsc clean.
+- 2026-10-03 T1.2 done: `channelPool.ts` covers provision (rows written as quarantined before the on-chain create, removed if the tx fails), ensurePool, reserve (`FOR UPDATE SKIP LOCKED` in one DB tx, current sequence read after locking), assign, quarantine, release, and a sweep of reservations past their tx time bounds. Starting balance is 2 XLM because channels never pay fees. `vitest.setup.ts` loads `.env` for integration tests. The bootstrap now tops the Testnet pool up to 20 (pool has 20 AVAILABLE). 4 Testnet+DB tests: concurrent reserve disjoint, refusal locks nothing, sweep. vitest 68/68, lint, tsc clean.
