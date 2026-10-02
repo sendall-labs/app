@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "e2e/scripts/download-freighter.sh && playwright test",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "bootstrap:testnet": "tsx scripts/bootstrap-testnet.ts"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.5.0",
@@ -46,6 +47,7 @@
     "prettier": "^3.9.6",
     "stellar-hd-wallet": "^1.0.2",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.10"
   }

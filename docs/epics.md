@@ -41,7 +41,7 @@ Environment:
   - Move `formatAmount` and `sumAmounts` to `src/lib/format.ts`.
   - Move `AssetField`, `NetworkField` and `AssetIcon` to `src/components/batches/`.
   - Accept: the page imports them; lint, tsc and tests are green.
-- [ ] **T0.3** Service accounts.
+- [x] **T0.3** Service accounts.
   - `src/lib/crypto/serviceKeys.ts`: AES-256-GCM encrypt/decrypt keyed by `SERVICE_KEY_ENCRYPTION_KEY`, with unit tests.
   - `src/lib/stellar/serviceAccounts.ts`: per-network sponsor M loaded from `SPONSOR_SECRET_TESTNET` / `SPONSOR_SECRET_PUBLIC`.
   - `scripts/bootstrap-testnet.ts`: create and friendbot-fund M, write the keys to `.env` if missing, provision the channel pool (T1.2) once it exists.
@@ -198,3 +198,4 @@ Environment:
 
 - 2026-10-02 T0.1 done: branch, PRD, tracker.
 - 2026-10-02 T0.2 done: assets, explorer links, amount formatting and the Asset/Network fields moved out of the batch page into `src/lib/stellar/{assets,explorer}.ts`, `src/lib/format.ts`, `src/components/batches/AssetFields.tsx`. lint, tsc clean; vitest 47/47 (incl. live Testnet integration).
+- 2026-10-02 T0.3 done: AES-256-GCM `serviceKeys.ts` (v1 format, tamper and wrong-key tests), `serviceAccounts.ts` (sponsor M from `SPONSOR_SECRET_<NETWORK>`), `npm run bootstrap:testnet` (idempotent; generated the encryption key and Testnet M `GDJDV3NU…UNQT`, funded 10,000 XLM). Decision: sponsor secret lives in host env, channel secrets will be encrypted in DB. Channel provisioning gets added to the script in T1.2. Added `tsx` dev dependency for scripts. lint, tsc clean; vitest 54/54.
