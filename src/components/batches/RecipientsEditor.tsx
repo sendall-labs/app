@@ -5,7 +5,7 @@ import { useCallback, useMemo, useRef } from "react";
 const CSV_HEADER = "destination,amount,memo";
 const EXAMPLE_ROWS = [
   "GDM5TPUTB7A7UW4QJ5SGUVA7WVJCNOHZO5RZIYM2Y4B3MJQB3F6CGOC5,10",
-  "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H,5.5,thanks",
+  "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H,5.5",
 ].join("\n");
 
 function nonEmptyLineCount(text: string): number {
@@ -119,12 +119,12 @@ export function RecipientsEditor({
           spellCheck={false}
           readOnly={readOnly}
           rows={8}
-          placeholder={"GDM5TP...CGOC5,10\nGBRPYH...7OX2H,5.5,optional memo"}
+          placeholder={"GDM5TP...CGOC5,10\nGBRPYH...7OX2H,5.5"}
           className="min-w-0 flex-1 resize-y bg-transparent px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint focus:outline-none"
         />
       </div>
       <p className="text-xs text-ink-faint">
-        One recipient per line: <code>address,amount</code>, optional third column for a memo.
+        One recipient per line: <code>address,amount</code>. Bulk sends carry no memo, so leave out exchange deposit addresses that need one.
       </p>
     </div>
   );

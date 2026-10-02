@@ -63,9 +63,19 @@ function IconSparkle(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function IconGift(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="8" width="14" height="9" rx="1.5" />
+      <path d="M2.5 8h15M10 8v9M10 8S8.5 3.5 6.5 4.5 7.5 8 10 8Zm0 0s1.5-4.5 3.5-3.5S12.5 8 10 8Z" />
+    </svg>
+  );
+}
+
 const NAV_ITEMS = [
   { href: "/home", label: "Home", icon: IconHome },
-  { href: "/batches/new", label: "New batch", icon: IconPlusCircle },
+  { href: "/batches/new", label: "Bulk Payment", icon: IconPlusCircle },
+  { href: "/batches/new/claimable", label: "Bulk Claimable Balance", icon: IconGift },
   { href: "/batches", label: "Batches", icon: IconStack },
   { href: "/address-lists", label: "Address Lists", icon: IconBook },
   { href: "/check-balance", label: "Check Balance", icon: IconWallet },
@@ -82,8 +92,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const isActive = (href: string) =>
     href === "/batches"
-      ? pathname === "/batches" || /^\/batches\/(?!new$)/.test(pathname)
-      : pathname.startsWith(href);
+      ? pathname === "/batches" || /^\/batches\/(?!new(\/|$))/.test(pathname)
+      : href.startsWith("/batches/new")
+        ? pathname === href
+        : pathname.startsWith(href);
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">

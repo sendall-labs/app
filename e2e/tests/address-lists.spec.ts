@@ -31,5 +31,5 @@ test("create an address list, then start a batch from it", async ({ context, bas
 
   await page.getByRole("button", { name: /Start batch from this list/ }).click();
   await expect(page).toHaveURL(/\/batches\/[^/]+$/, { timeout: 15_000 });
-  await expect(page.getByRole("heading", { name: "Batch review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Bulk payment/ })).toBeVisible();
 });

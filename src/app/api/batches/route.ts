@@ -26,7 +26,11 @@ const createBatchSchema = z.object({
     .optional(),
   assetCode: z.string().optional(),
   assetIssuer: z.string().optional(),
+  kind: z.enum(["PAYMENT", "CLAIMABLE_BALANCE"]).optional(),
 });
+
+// Default claim window for a new claimable balance batch (PRD FR-3.2).
+const DEFAULT_CLAIM_DAYS = 30;
 
 export async function GET() {
   const access = await resolveBatchAccess();
@@ -38,7 +42,27 @@ export async function GET() {
     include: { _count: { select: { recipients: true } } },
   });
 
-  return NextResponse.json({ batches });
+  // Claim progress for claimable balance batches: "claimed x / y".
+  const claimableIds = batches.filter((b) => b.kind === "CLAIMABLE_BALANCE").map((b) => b.id);
+  const claimCounts = claimableIds.length
+    ? await prisma.recipient.groupBy({
+        by: ["batchId", "claimStatus"],
+        where: { batchId: { in: claimableIds }, claimStatus: { not: null } },
+        _count: { _all: true },
+      })
+    : [];
+  const claims = new Map<string, { created: number; claimed: number; reclaimed: number }>();
+  for (const row of claimCounts) {
+    const c = claims.get(row.batchId) ?? { created: 0, claimed: 0, reclaimed: 0 };
+    c.created += row._count._all;
+    if (row.claimStatus === "CLAIMED") c.claimed += row._count._all;
+    if (row.claimStatus === "RECLAIMED") c.reclaimed += row._count._all;
+    claims.set(row.batchId, c);
+  }
+
+  return NextResponse.json({
+    batches: batches.map((b) => ({ ...b, claims: b.kind === "CLAIMABLE_BALANCE" ? (claims.get(b.id) ?? { created: 0, claimed: 0, reclaimed: 0 }) : null })),
+  });
 }
 
 export async function POST(request: Request) {
@@ -49,7 +73,7 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
-  const { csvText, csvFileName, network, sourceAccount, assetCode, assetIssuer } = parsed.data;
+  const { csvText, csvFileName, network, sourceAccount, assetCode, assetIssuer, kind = "PAYMENT" } = parsed.data;
 
   if (anonId) {
     const unclaimedCount = await prisma.batch.count({ where: { anonId, ownerPublicKey: null } });
@@ -76,6 +100,8 @@ export async function POST(request: Request) {
       assetCode: assetCode || null,
       assetIssuer: assetIssuer || null,
       csvFileName,
+      kind,
+      claimExpiresAt: kind === "CLAIMABLE_BALANCE" ? new Date(Date.now() + DEFAULT_CLAIM_DAYS * 86_400_000) : null,
       status: "VALIDATED",
       recipients: {
         create: validated.map((r) => ({

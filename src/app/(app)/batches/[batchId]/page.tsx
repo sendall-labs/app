@@ -11,6 +11,7 @@ import { explorerAccountUrl, explorerTxUrl } from "@/lib/stellar/explorer";
 import { formatAmount, sumAmounts } from "@/lib/format";
 import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
 import { DistributionProgress } from "@/components/distribution/DistributionProgress";
+import { KindBadge } from "@/components/batches/KindBadge";
 import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
 
 // "channels" (default): one wallet signature, chunks sent in parallel by
@@ -59,6 +60,8 @@ type Batch = {
   recipients: Recipient[];
   attempts: Attempt[];
   runs?: RunSummary[];
+  kind?: "PAYMENT" | "CLAIMABLE_BALANCE";
+  claimExpiresAt?: string | null;
 };
 
 type EditableRow = {
@@ -744,7 +747,10 @@ export default function BatchReviewPage() {
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Batch review</h1>
+        <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight text-ink">
+          {batch.kind === "CLAIMABLE_BALANCE" ? "Bulk claimable balance" : "Bulk payment"}
+          <KindBadge kind={batch.kind ?? "PAYMENT"} />
+        </h1>
         <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
           {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
