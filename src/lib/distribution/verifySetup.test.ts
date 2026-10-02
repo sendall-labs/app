@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Keypair, Networks, TransactionBuilder, type Transaction } from "@stellar/stellar-sdk";
 import { buildSetup } from "./buildSetup";
+import { buildRemoval } from "./cleanup";
 import { DistributionError } from "./errors";
 import { verifySignedSetup, type ExpectedSetup } from "./verifySetup";
 
@@ -118,6 +119,40 @@ describe("verifySignedSetup", () => {
     );
     expect(code(() => verifySignedSetup({ ...expected, sponsorPublicKey: Keypair.random().publicKey() }, signAs(persisted.xdr, user)))).toBe(
       "SETUP_MISMATCH:sponsorship start"
+    );
+  });
+});
+
+describe("verifySignedSetup (removal)", () => {
+  const removal = buildRemoval({ network: "TESTNET", sourceAccount: user.publicKey(), sourceSequence: "7", hashes, maxTime: future() });
+  const expected: ExpectedSetup = {
+    network: "TESTNET",
+    persistedXdr: removal.xdr,
+    persistedHash: removal.hash,
+    sourceAccount: user.publicKey(),
+    sponsorPublicKey: sponsor.publicKey(),
+    chunkHashes: hashes,
+    preAuthWeight: 0,
+    kind: "remove",
+  };
+
+  it("accepts a sender-signed removal and keeps only that signature", () => {
+    const out = verifySignedSetup(expected, signAs(removal.xdr, user, Keypair.random()));
+    const tx = TransactionBuilder.fromXDR(out, Networks.TESTNET) as Transaction;
+    expect(tx.signatures).toHaveLength(1);
+    expect(user.verify(tx.hash(), tx.signatures[0].signature())).toBe(true);
+  });
+
+  it("rejects a removal aimed at other signers", () => {
+    expect(code(() => verifySignedSetup({ ...expected, chunkHashes: [hashes[0], "99".repeat(32)] }, signAs(removal.xdr, user)))).toBe(
+      "SETUP_MISMATCH:signer hash 2"
+    );
+  });
+
+  it("rejects an install setup presented as a removal", () => {
+    const install = setupWith();
+    expect(code(() => verifySignedSetup({ ...expected, persistedXdr: install.xdr, persistedHash: install.hash }, signAs(install.xdr, user)))).toBe(
+      "SETUP_MISMATCH:operation count"
     );
   });
 });

@@ -13,6 +13,9 @@ export type ExpectedSetup = {
   preAuthWeight: number;
   // The key the wallet signs with; the sender's master key by default.
   walletKey?: string;
+  // "install" (default): the sponsored setup that adds signers.
+  // "remove": a cleanup that only sets leftover preAuthTx signers to 0.
+  kind?: "install" | "remove";
 };
 
 function mismatch(reason: string): never {
@@ -60,6 +63,25 @@ export function assertSetupShape(tx: Transaction, expected: Omit<ExpectedSetup, 
 }
 
 /**
+ * Shape of a cleanup transaction: sender-sourced, nothing but SetOptions
+ * that remove (weight 0) exactly the expected preAuthTx signers.
+ */
+export function assertRemovalShape(tx: Transaction, expected: Pick<ExpectedSetup, "sourceAccount" | "chunkHashes">) {
+  if (tx.source !== expected.sourceAccount) mismatch("transaction source");
+  if (tx.operations.length !== expected.chunkHashes.length || tx.operations.length === 0) mismatch("operation count");
+  tx.operations.forEach((op, i) => {
+    if (op.type !== "setOptions") mismatch(`operation ${i + 1} type`);
+    if (op.source !== undefined && op.source !== expected.sourceAccount) mismatch(`operation ${i + 1} source`);
+    const signer = op.signer as { preAuthTx?: Buffer; weight?: number } | undefined;
+    if (!signer?.preAuthTx || signer.preAuthTx.toString("hex") !== expected.chunkHashes[i]) mismatch(`signer hash ${i + 1}`);
+    if (signer.weight !== 0) mismatch(`signer weight ${i + 1}`);
+    if (op.masterWeight !== undefined || op.lowThreshold !== undefined || op.medThreshold !== undefined || op.highThreshold !== undefined) {
+      mismatch(`operation ${i + 1} changes more than a signer`);
+    }
+  });
+}
+
+/**
  * Validates the setup the browser sent back and returns the envelope to
  * submit. The transaction hash covers network, source, sequence, fee,
  * time bounds, memo and every operation, so requiring the persisted hash
@@ -80,7 +102,9 @@ export function verifySignedSetup(expected: ExpectedSetup, signedXdr: string, no
   const persisted = TransactionBuilder.fromXDR(expected.persistedXdr, passphrase) as Transaction;
   const persistedHash = persisted.hash();
   if (persistedHash.toString("hex") !== expected.persistedHash) mismatch("persisted record");
-  assertSetupShape(persisted, expected);
+  const removal = expected.kind === "remove";
+  if (removal) assertRemovalShape(persisted, expected);
+  else assertSetupShape(persisted, expected);
 
   const hash = signed.hash();
   if (!hash.equals(persistedHash)) mismatch("transaction contents");
@@ -96,12 +120,16 @@ export function verifySignedSetup(expected: ExpectedSetup, signedXdr: string, no
   };
   const walletSig = pick(expected.walletKey ?? expected.sourceAccount);
   if (!walletSig) mismatch("missing sender signature");
+  const final = TransactionBuilder.fromXDR(expected.persistedXdr, passphrase) as Transaction;
+  if (removal) {
+    // No sponsor operation, so the sender's signature is the only one.
+    final.signatures.splice(0, final.signatures.length, walletSig);
+    return final.toXDR();
+  }
   const sponsorSig =
     pick(expected.sponsorPublicKey) ??
     persisted.signatures.find((s) => Keypair.fromPublicKey(expected.sponsorPublicKey).verify(hash, s.signature()));
   if (!sponsorSig) mismatch("missing sponsor signature");
-
-  const final = TransactionBuilder.fromXDR(expected.persistedXdr, passphrase) as Transaction;
   final.signatures.splice(0, final.signatures.length, sponsorSig, walletSig);
   return final.toXDR();
 }

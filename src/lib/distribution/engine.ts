@@ -181,9 +181,24 @@ export async function authorizeRun(runId: string, signedXdr: string, now = new D
     if (run.setupFeeBumpXdr) return run; // already authorized
     throw new DistributionError("INVALID_STATE", `Run is ${run.status}, not waiting for a signature.`);
   }
-  if (!run.setupXdr || !run.setupHash || !run.preAuthWeight) throw new DistributionError("INVALID_STATE", "Run has no setup.");
+  if (!run.setupXdr || !run.setupHash || (run.purpose !== "CLEANUP" && !run.preAuthWeight)) {
+    throw new DistributionError("INVALID_STATE", "Run has no setup.");
+  }
 
   const sponsor = getSponsorKeypair(run.network);
+  const passphrase = getNetworkPassphrase(run.network);
+  let chunkHashes = [...run.transactions].sort((a, b) => a.chunkIndex - b.chunkIndex).map((t) => t.transactionHash);
+  if (run.purpose === "CLEANUP") {
+    // The hashes to remove are the server-built removal's own; each must
+    // belong to the parent run, so a cleanup can never touch other signers.
+    const persisted = TransactionBuilder.fromXDR(run.setupXdr, passphrase) as Transaction;
+    chunkHashes = persisted.operations.map((op) =>
+      op.type === "setOptions" ? ((op.signer as { preAuthTx?: Buffer } | undefined)?.preAuthTx?.toString("hex") ?? "") : ""
+    );
+    const parent = await prisma.channelTransaction.findMany({ where: { runId: run.parentRunId ?? "" }, select: { transactionHash: true } });
+    const allowed = new Set(parent.map((t) => t.transactionHash));
+    if (chunkHashes.some((h) => !allowed.has(h))) throw new DistributionError("SETUP_MISMATCH", "Cleanup targets a signer outside its distribution.");
+  }
   const finalXdr = verifySignedSetup(
     {
       network: run.network,
@@ -191,8 +206,9 @@ export async function authorizeRun(runId: string, signedXdr: string, now = new D
       persistedHash: run.setupHash,
       sourceAccount: run.sourceAccount,
       sponsorPublicKey: run.sponsorAccount,
-      chunkHashes: [...run.transactions].sort((a, b) => a.chunkIndex - b.chunkIndex).map((t) => t.transactionHash),
-      preAuthWeight: run.preAuthWeight,
+      chunkHashes,
+      preAuthWeight: run.preAuthWeight ?? 0,
+      kind: run.purpose === "CLEANUP" ? "remove" : "install",
     },
     signedXdr,
     now
@@ -253,6 +269,21 @@ export async function advanceRun(runId: string): Promise<DistributionRun> {
         // The setup did not apply, so no signer was installed and no chunk
         // can ever land.
         await failRunBeforePayments(run, outcome);
+      }
+      run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+    }
+
+    if (run.status === "SETUP_CONFIRMED" && run.purpose === "CLEANUP") {
+      // The removal itself is the whole job.
+      await setRunStatus(runId, "SETUP_CONFIRMED", { status: "COMPLETED", completedAt: new Date() });
+      if (run.parentRunId) {
+        const parent = await verifySignersCleared(run.parentRunId);
+        if (parent.leftoverHashes.length === 0) {
+          await prisma.distributionRun.updateMany({
+            where: { id: run.parentRunId, errorCode: "CLEANUP_REQUIRED" },
+            data: { errorCode: null, errorMessage: null },
+          });
+        }
       }
       run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
     }
@@ -408,6 +439,12 @@ export async function applyChunkOutcome(chunk: ChannelTransaction, outcome: Subm
       }
       return;
     case "TIMEOUT":
+      if (chunk.maxTime.getTime() + 30_000 < Date.now()) {
+        // submitPersisted already looked the hash up: past its window it
+        // never landed and never can.
+        await prisma.channelTransaction.update({ where: { id: chunk.id }, data: { status: "EXPIRED", errorCode: "txTooLate" } });
+        return;
+      }
       if (channel) await prisma.channelAccount.update({ where: { id: channel.id }, data: { status: "AWAITING_CONFIRMATION" } });
       return;
   }
