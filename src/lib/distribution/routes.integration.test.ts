@@ -39,12 +39,12 @@ describe.skipIf(!!process.env.CI)("run API routes (Testnet)", () => {
   it("prepares, authorizes and reports a run; reauthorizes the failed rows", async () => {
     const user = await fundedAccount();
     session.publicKey = user.publicKey();
-    const missing = Keypair.random().publicKey();
-    const batch = await seedBatch(user.publicKey(), [Keypair.random().publicKey(), missing]);
+    const late = Keypair.random();
+    const batch = await seedBatch(user.publicKey(), [Keypair.random().publicKey(), late.publicKey()]);
     batchIds.push(batch.id);
-    // First row is a new account (createAccount); the second will be
-    // sent as a payment to an account that does not exist, and fail.
-    await prisma.recipient.update({ where: { id: batch.recipients[0].id }, data: { accountExists: false } });
+    // Both rows are new accounts. The second one gets created by someone
+    // else after preflight, so its createAccount fails on-chain.
+    await prisma.recipient.updateMany({ where: { batchId: batch.id }, data: { accountExists: false } });
 
     const prep = await prepareRoute(json({ idempotencyKey: "route-test-1" }), ctx({ batchId: batch.id }));
     expect(prep.status).toBe(200);
@@ -60,6 +60,9 @@ describe.skipIf(!!process.env.CI)("run API routes (Testnet)", () => {
     expect(tampered.status).toBe(400);
     expect((await tampered.json()).code).toBe("SETUP_MISMATCH");
 
+    expect(prepared.preflight).toMatchObject({ senderNativeNeeded: "2", claimableReserve: "0" });
+    expect((await fetch(`https://friendbot.stellar.org?addr=${late.publicKey()}`)).ok).toBe(true);
+
     const auth = await authorizeRoute(json({ signedXdr: signLikeWallet(prepared.setupXdr, user) }), ctx({ runId: prepared.runId }));
     expect(auth.status).toBe(200);
     await flush();
@@ -71,14 +74,14 @@ describe.skipIf(!!process.env.CI)("run API routes (Testnet)", () => {
     }
     expect(view).toMatchObject({ status: "FAILED", terminal: true, cleanupRequired: false, recipients: { total: 2, succeeded: 0, failed: 2 } });
     expect(view.transactions).toHaveLength(1);
-    expect(view.transactions[0]).toMatchObject({ status: "REAUTHORIZATION_REQUIRED", errorCode: "paymentNoDestination", operationCount: 2 });
+    expect(view.transactions[0]).toMatchObject({ status: "REAUTHORIZATION_REQUIRED", errorCode: "createAccountAlreadyExist", operationCount: 2 });
     expect(view.elapsedMs).toBeGreaterThan(0);
 
     expect(await (await cleanupRoute(json({}), ctx({ runId: prepared.runId }))).json()).toEqual({ clean: true });
 
-    // Fix the bad row the way a sender would (send it as a new account),
-    // then authorize the failed rows again.
-    await prisma.recipient.update({ where: { id: batch.recipients[1].id }, data: { accountExists: false } });
+    // Re-checking would now see the account; send it as a payment, then
+    // authorize the failed rows again.
+    await prisma.recipient.update({ where: { id: batch.recipients[1].id }, data: { accountExists: true } });
     const re = await reauthorizeRoute(json({ idempotencyKey: "route-test-3" }), ctx({ runId: prepared.runId }));
     expect(re.status).toBe(200);
     const again = await re.json();

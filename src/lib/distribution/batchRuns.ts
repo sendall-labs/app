@@ -4,6 +4,9 @@ import { prisma } from "@/lib/db/prisma";
 import type { DistributionOp } from "./buildChunks";
 import { isTerminalRun, prepareRun, type PreparedRun } from "./engine";
 import { DistributionError } from "./errors";
+import { feeRatePerOp } from "./feeBump";
+import { runPreflight, type PreflightProblem, type PreflightSummary } from "./preflight";
+import { getSponsorKeypair, isSponsorConfigured } from "@/lib/stellar/serviceAccounts";
 
 export function batchAsset(batch: Pick<Batch, "assetCode" | "assetIssuer">): Asset | null {
   return batch.assetCode && batch.assetIssuer ? new Asset(batch.assetCode, batch.assetIssuer) : null;
@@ -33,7 +36,7 @@ export async function prepareBatchRun(params: {
   idempotencyKey: string;
   purpose?: "SEND" | "REAUTHORIZE";
   parentRunId?: string;
-}): Promise<PreparedRun> {
+}): Promise<PreparedRun & { preflight?: PreflightSummary }> {
   const { batch } = params;
   const key = `${batch.id}:${params.idempotencyKey}`;
   const existing = await prisma.distributionRun.findUnique({
@@ -59,20 +62,44 @@ export async function prepareBatchRun(params: {
   const ready = batch.recipients.filter((r) => r.status === "READY").sort((a, b) => a.rowIndex - b.rowIndex);
   if (ready.length === 0) throw new DistributionError("PREFLIGHT_FAILED", "No rows are ready to send.");
 
+  const ops = opsForBatch(batch, ready);
+  if (!isSponsorConfigured(batch.network)) {
+    throw new DistributionError("SPONSOR_NOT_CONFIGURED", `Sending on ${batch.network} is not available yet.`);
+  }
+  let preflight: PreflightSummary;
+  try {
+    preflight = await runPreflight({
+      network: batch.network,
+      sourceAccount: batch.sourceAccount,
+      sponsorAccount: getSponsorKeypair(batch.network).publicKey(),
+      asset: batchAsset(batch),
+      ops,
+      rows: ready.map((r) => ({ recipientId: r.id, destination: r.destination, amount: r.amount.toString(), memo: r.memo })),
+      feePerOp: await feeRatePerOp(batch.network),
+    });
+  } catch (err) {
+    // Flag the rows themselves so the table shows what to fix.
+    const problems = (err instanceof DistributionError ? (err.details?.problems as PreflightProblem[] | undefined) : undefined) ?? [];
+    for (const p of problems.filter((p) => p.recipientId)) {
+      await prisma.recipient.update({ where: { id: p.recipientId }, data: { status: "CHECK_FAILED", errorMessage: p.message } });
+    }
+    throw err;
+  }
+
   const prepared = await prepareRun({
     batchId: batch.id,
     network: batch.network,
     sourceAccount: batch.sourceAccount,
     idempotencyKey: key,
     asset: batchAsset(batch),
-    ops: opsForBatch(batch, ready),
+    ops,
     claimExpiresAt: batch.claimExpiresAt ?? undefined,
     purpose: params.purpose ?? "SEND",
     parentRunId: params.parentRunId,
   });
   await prisma.recipient.updateMany({ where: { id: { in: ready.map((r) => r.id) } }, data: { status: "IN_TRANSACTION", errorMessage: null } });
   await prisma.batch.update({ where: { id: batch.id }, data: { status: "SUBMITTING" } });
-  return prepared;
+  return { ...prepared, preflight };
 }
 
 /** Rows from a finished run that can only go out again with a new signature. */

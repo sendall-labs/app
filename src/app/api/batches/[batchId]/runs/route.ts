@@ -48,6 +48,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ bat
         network: batch.network,
         kind: batch.kind,
       },
+      preflight: prepared.preflight ?? null,
     });
   } catch (err) {
     return errorResponse(err);

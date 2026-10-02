@@ -85,40 +85,52 @@ export async function checkRecipients(
     rawKeyByDestination.set(t.destination, Keypair.fromPublicKey(baseAddress).rawPublicKey());
   }
 
+  // Several rows can resolve to the same ledger key (a repeated
+  // destination, or muxed ids on one base account), and RPC rejects a
+  // request that repeats a key, so each key is asked for once and its
+  // answer fanned out to every destination behind it.
   const keys: xdr.LedgerKey[] = [];
-  const keyLookup = new Map<string, { destination: string; kind: "account" | "trustline" }>();
+  const keyLookup = new Map<string, { destinations: string[]; kind: "account" | "trustline" }>();
+  const addKey = (key: xdr.LedgerKey, destination: string, kind: "account" | "trustline") => {
+    const id = key.toXDR("base64");
+    const known = keyLookup.get(id);
+    if (known) {
+      if (!known.destinations.includes(destination)) known.destinations.push(destination);
+      return;
+    }
+    keys.push(key);
+    keyLookup.set(id, { destinations: [destination], kind });
+  };
 
   for (const t of targets) {
     const raw = rawKeyByDestination.get(t.destination)!;
-    const aKey = buildAccountKey(raw);
-    keys.push(aKey);
-    keyLookup.set(aKey.toXDR("base64"), { destination: t.destination, kind: "account" });
-
-    if (asset) {
-      const tKey = buildTrustlineKey(raw, asset);
-      keys.push(tKey);
-      keyLookup.set(tKey.toXDR("base64"), { destination: t.destination, kind: "trustline" });
-    }
+    addKey(buildAccountKey(raw), t.destination, "account");
+    if (asset) addKey(buildTrustlineKey(raw, asset), t.destination, "trustline");
   }
 
   const foundAccounts = new Set<string>();
   const nativeBalances = new Map<string, bigint>();
-  const trustlines = new Map<string, { balance: bigint; limit: bigint }>();
+  const trustlines = new Map<string, { balance: bigint; limit: bigint; authorized: boolean }>();
 
   for (const batch of chunk(keys, MAX_KEYS_PER_CALL)) {
     const { entries } = await server.getLedgerEntries(...batch);
     for (const entry of entries) {
       const meta = keyLookup.get(entry.key.toXDR("base64"));
       if (!meta) continue;
-      if (meta.kind === "account") {
-        foundAccounts.add(meta.destination);
-        nativeBalances.set(meta.destination, BigInt(entry.val.account().balance().toString()));
-      } else {
-        const tl = entry.val.trustLine();
-        trustlines.set(meta.destination, {
-          balance: BigInt(tl.balance().toString()),
-          limit: BigInt(tl.limit().toString()),
-        });
+      for (const destination of meta.destinations) {
+        if (meta.kind === "account") {
+          foundAccounts.add(destination);
+          nativeBalances.set(destination, BigInt(entry.val.account().balance().toString()));
+        } else {
+          const tl = entry.val.trustLine();
+          trustlines.set(destination, {
+            balance: BigInt(tl.balance().toString()),
+            limit: BigInt(tl.limit().toString()),
+            // AUTHORIZED_FLAG: an issuer with auth_required can hold a
+            // trustline unauthorized, and payments to it then fail.
+            authorized: (tl.flags() & 1) === 1,
+          });
+        }
       }
     }
   }
@@ -174,12 +186,14 @@ export async function checkRecipients(
       hasTrustline,
       trustlineLimitOk,
       needsCreateAccount: false,
-      ok: hasTrustline && trustlineLimitOk,
+      ok: hasTrustline && trustlineLimitOk && tl!.authorized,
       reason: !hasTrustline
         ? "No trustline for this asset"
         : !trustlineLimitOk
           ? "Payment would exceed trustline limit"
-          : undefined,
+          : !tl!.authorized
+            ? "Trustline is not authorized by the asset issuer"
+            : undefined,
     });
   }
 
