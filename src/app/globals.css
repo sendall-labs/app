@@ -125,3 +125,74 @@ body {
   -webkit-background-clip: text;
   color: transparent;
 }
+
+/* Live send panel (components/distribution/DistributionProgress). */
+@keyframes send-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes send-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+@keyframes send-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes send-rise {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.send-shimmer {
+  animation: send-shimmer 1.3s ease-in-out infinite;
+}
+.send-ping {
+  animation: send-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.send-pop {
+  animation: send-pop 0.35s ease-out both;
+}
+.send-rise {
+  animation: send-rise 0.3s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-shimmer,
+  .send-ping {
+    animation: none;
+    opacity: 0;
+  }
+  .send-pop,
+  .send-rise {
+    animation: none;
+  }
+}

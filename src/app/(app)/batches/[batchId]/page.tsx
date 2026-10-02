@@ -10,6 +10,7 @@ import { AssetField, NetworkField } from "@/components/batches/AssetFields";
 import { explorerAccountUrl, explorerTxUrl } from "@/lib/stellar/explorer";
 import { formatAmount, sumAmounts } from "@/lib/format";
 import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
+import { DistributionProgress } from "@/components/distribution/DistributionProgress";
 
 // "channels" (default): one wallet signature, chunks sent in parallel by
 // the channel engine. "legacy": the Phase 1 sequential sender, kept as
@@ -793,6 +794,15 @@ export default function BatchReviewPage() {
           canEdit={canEdit}
           onTextChange={handlePrepareTextChange}
           flushPendingSave={flushPendingSave}
+        />
+      )}
+
+      {distribution.phase !== "idle" && distribution.phase !== "error" && (
+        <DistributionProgress
+          phase={distribution.phase}
+          run={distribution.run}
+          transactionCount={distribution.transactionCount}
+          onDismiss={distribution.reset}
         />
       )}
 

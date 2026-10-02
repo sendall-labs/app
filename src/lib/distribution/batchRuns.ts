@@ -126,8 +126,7 @@ export function serializeRun(
       confirmedAt: Date | null;
       _count: { items: number };
     }[];
-  },
-  recipientCounts: Record<string, number>
+  }
 ) {
   const end = run.completedAt ?? (isTerminalRun(run.status) ? run.updatedAt : new Date());
   return {
@@ -167,12 +166,21 @@ export function serializeRun(
         submittedAt: t.submittedAt,
         confirmedAt: t.confirmedAt,
       })),
-    recipients: {
-      total: Object.values(recipientCounts).reduce((a, b) => a + b, 0),
-      succeeded: recipientCounts.SUCCESS ?? 0,
-      failed: (recipientCounts.FAILED ?? 0) + (recipientCounts.REAUTHORIZATION_REQUIRED ?? 0) + (recipientCounts.EXPIRED ?? 0),
-      pending: (recipientCounts.PREPARED ?? 0) + (recipientCounts.SUBMITTING ?? 0),
-    },
+    // Counted from the transactions themselves (a transaction is atomic,
+    // so all its rows share its outcome); this always agrees with the
+    // lanes, even in the moment before rows are reconciled.
+    recipients: (() => {
+      let succeeded = 0;
+      let failed = 0;
+      let pending = 0;
+      for (const t of run.transactions) {
+        const n = t._count.items;
+        if (t.status === "SUCCESS") succeeded += n;
+        else if (["FAILED", "REAUTHORIZATION_REQUIRED", "EXPIRED"].includes(t.status)) failed += n;
+        else pending += n;
+      }
+      return { total: succeeded + failed + pending, succeeded, failed, pending };
+    })(),
   };
 }
 
@@ -195,10 +203,5 @@ export async function loadRunView(runId: string) {
       },
     },
   });
-  const grouped = await prisma.channelTransactionItem.groupBy({
-    by: ["status"],
-    where: { transaction: { runId } },
-    _count: { _all: true },
-  });
-  return serializeRun(run, Object.fromEntries(grouped.map((g) => [g.status, g._count._all])));
+  return serializeRun(run);
 }
