@@ -61,6 +61,16 @@ function unwrap(result: xdr.TransactionResult): { txCode: string; inner: xdr.Tra
   return { txCode: kind, inner: result };
 }
 
+/** Raw per-operation results of a (possibly fee-bumped) transaction. */
+export function operationResults(resultXdr: string): xdr.OperationResult[] {
+  const { inner } = unwrap(xdr.TransactionResult.fromXDR(resultXdr, "base64"));
+  try {
+    return inner.result().results() ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export function describeResult(result: xdr.TransactionResult): { txCode: string; perOperation: OpResult[] } {
   const { txCode, inner } = unwrap(result);
   let perOperation: OpResult[] = [];

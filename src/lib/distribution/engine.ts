@@ -17,6 +17,7 @@ import {
 } from "./channelPool";
 import { DistributionError } from "./errors";
 import { buildFeeBump, feeRatePerOp, submitPersisted, type SubmitOutcome } from "./feeBump";
+import { checkRunSigners, reconcileChunkById, reconcileRun } from "./reconcile";
 import { assertSetupShape, verifySignedSetup } from "./verifySetup";
 
 // Chunks get a longer window than the setup so they can still land after
@@ -274,6 +275,7 @@ export async function advanceRun(runId: string): Promise<DistributionRun> {
       await setRunStatus(runId, "AWAITING_USER_SIGNATURE", { status: "EXPIRED", errorCode: "SETUP_EXPIRED", completedAt: new Date() });
       await prisma.channelTransaction.updateMany({ where: { runId }, data: { status: "EXPIRED", errorCode: "SETUP_EXPIRED" } });
       await releaseRunChannels(runId);
+      await reconcileRun(runId);
       run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
     }
     return run;
@@ -291,6 +293,7 @@ async function failRunBeforePayments(run: DistributionRun, outcome: SubmitOutcom
     completedAt: new Date(),
   });
   await releaseRunChannels(run.id);
+  await reconcileRun(run.id);
 }
 
 async function releaseRunChannels(runId: string) {
@@ -305,6 +308,7 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
   if (current.status === "PREPARED") {
     if (current.maxTime < new Date()) {
       await prisma.channelTransaction.update({ where: { id: current.id }, data: { status: "EXPIRED", errorCode: "txTooLate" } });
+      await reconcileChunkById(current.id);
       return;
     }
     const channel = await prisma.channelAccount.findUniqueOrThrow({ where: { publicKey: current.channelPublicKey } });
@@ -317,6 +321,7 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
         data: { status: "EXPIRED", errorCode: "CHANNEL_SEQUENCE_CHANGED" },
       });
       await quarantineChannel(channel.id, `sequence ${onChain} != expected ${BigInt(current.channelSequence) - BigInt(1)}`);
+      await reconcileChunkById(current.id);
       return;
     }
 
@@ -349,6 +354,7 @@ async function processChunk(run: DistributionRun, chunk: ChannelTransaction) {
   if (current.status !== "SUBMITTING" || !current.feeBumpXdr) return;
   const outcome = await submitPersisted(network, current.feeBumpXdr);
   await applyChunkOutcome(current, outcome);
+  await reconcileChunkById(current.id);
 }
 
 const RETRYABLE_REJECTIONS = new Set(["txInsufficientFee", "TRY_AGAIN_LATER"]);
@@ -412,7 +418,28 @@ async function finalizeIfDone(run: DistributionRun) {
   if (chunks.some((c) => !TERMINAL_CHUNK.has(c.status))) return;
   const ok = chunks.filter((c) => c.status === "SUCCESS").length;
   const status = ok === chunks.length ? "COMPLETED" : ok === 0 ? "FAILED" : "PARTIALLY_FAILED";
-  await setRunStatus(run.id, "PAYMENTS_SUBMITTING", { status, completedAt: new Date() });
+  const moved = await setRunStatus(run.id, "PAYMENTS_SUBMITTING", { status, completedAt: new Date() });
+  if (moved.count === 0) return;
+  await reconcileRun(run.id);
+  await verifySignersCleared(run.id);
+}
+
+/**
+ * After a run ends, confirms on Horizon that none of its preAuthTx
+ * signers are left on the sender (applied chunks remove theirs, and the
+ * sponsor's reserve goes with them). Anything left is flagged for the
+ * cleanup flow rather than silently forgotten.
+ */
+export async function verifySignersCleared(runId: string) {
+  const run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId }, include: { transactions: { select: { transactionHash: true } } } });
+  const check = await checkRunSigners(run.network, run.sourceAccount, run.transactions.map((t) => t.transactionHash));
+  if (check.leftoverHashes.length > 0) {
+    await prisma.distributionRun.update({
+      where: { id: runId },
+      data: { errorCode: "CLEANUP_REQUIRED", errorMessage: `${check.leftoverHashes.length} temporary signer(s) remain on the sender.` },
+    });
+  }
+  return check;
 }
 
 export function isTerminalRun(status: DistributionRun["status"]) {
