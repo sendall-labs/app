@@ -87,6 +87,13 @@ export function SendReviewCard({
               />
             )}
             {s && <Row label="Delivery" value={claimable ? "Claimable balances" : "Direct payments"} />}
+            {s && claimable && s.claimExpiresAt && (
+              <Row
+                label="Claim until"
+                value={new Date(s.claimExpiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                hint="Afterwards you can reclaim whatever was not claimed"
+              />
+            )}
             {p && claimable && (
               <Row
                 label="Reserve locked"

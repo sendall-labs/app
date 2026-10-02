@@ -3,6 +3,7 @@ import type { Batch, DistributionRun, Recipient } from "@/generated/prisma/clien
 import { prisma } from "@/lib/db/prisma";
 import type { DistributionOp } from "./buildChunks";
 import { isTerminalRun, prepareRun, type PreparedRun } from "./engine";
+import { claimDeadline, DEFAULT_CLAIM_WINDOW_DAYS } from "./claimWindow";
 import { DistributionError } from "./errors";
 import { feeRatePerOp } from "./feeBump";
 import { runPreflight, type PreflightProblem, type PreflightSummary } from "./preflight";
@@ -36,7 +37,7 @@ export async function prepareBatchRun(params: {
   idempotencyKey: string;
   purpose?: "SEND" | "REAUTHORIZE";
   parentRunId?: string;
-}): Promise<PreparedRun & { preflight?: PreflightSummary }> {
+}): Promise<PreparedRun & { preflight?: PreflightSummary; claimExpiresAt?: Date }> {
   const { batch } = params;
   const key = `${batch.id}:${params.idempotencyKey}`;
   const existing = await prisma.distributionRun.findUnique({
@@ -55,8 +56,10 @@ export async function prepareBatchRun(params: {
     throw new DistributionError("INVALID_STATE", "This distribution is already in progress.", { runId: active.id });
   }
   if (!batch.sourceAccount) throw new DistributionError("INVALID_STATE", "Connect a wallet before sending.");
-  if (batch.kind === "CLAIMABLE_BALANCE" && (!batch.claimExpiresAt || batch.claimExpiresAt <= new Date())) {
-    throw new DistributionError("PREFLIGHT_FAILED", "Pick a claim expiry in the future.");
+  // The claim window counts from sending, so the deadline is fixed now.
+  let claimExpiresAt: Date | undefined;
+  if (batch.kind === "CLAIMABLE_BALANCE") {
+    claimExpiresAt = claimDeadline(batch.claimWindowDays ?? DEFAULT_CLAIM_WINDOW_DAYS);
   }
 
   const ready = batch.recipients.filter((r) => r.status === "READY").sort((a, b) => a.rowIndex - b.rowIndex);
@@ -93,13 +96,13 @@ export async function prepareBatchRun(params: {
     idempotencyKey: key,
     asset: batchAsset(batch),
     ops,
-    claimExpiresAt: batch.claimExpiresAt ?? undefined,
+    claimExpiresAt,
     purpose: params.purpose ?? "SEND",
     parentRunId: params.parentRunId,
   });
   await prisma.recipient.updateMany({ where: { id: { in: ready.map((r) => r.id) } }, data: { status: "IN_TRANSACTION", errorMessage: null } });
-  await prisma.batch.update({ where: { id: batch.id }, data: { status: "SUBMITTING" } });
-  return { ...prepared, preflight };
+  await prisma.batch.update({ where: { id: batch.id }, data: { status: "SUBMITTING", ...(claimExpiresAt ? { claimExpiresAt } : {}) } });
+  return { ...prepared, preflight, claimExpiresAt };
 }
 
 /** Rows from a finished run that can only go out again with a new signature. */

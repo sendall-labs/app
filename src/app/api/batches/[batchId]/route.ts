@@ -3,6 +3,7 @@ import { z } from "zod";
 import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 import { cancelRun } from "@/lib/distribution/engine";
+import { claimDeadline, DEFAULT_CLAIM_WINDOW_DAYS } from "@/lib/distribution/claimWindow";
 
 export async function GET(
   _request: Request,
@@ -44,10 +45,10 @@ const patchSchema = z
     assetIssuer: z.string().optional(),
     // Payment <-> claimable balance, switchable until a run is signed.
     kind: z.enum(["PAYMENT", "CLAIMABLE_BALANCE"]).optional(),
+    // Claimable balances: how long recipients have to claim, from sending.
+    claimWindowDays: z.union([z.literal(7), z.literal(30), z.literal(90)]).optional(),
   })
-  .refine((v) => v.network !== undefined || v.kind !== undefined, "Nothing to change");
-
-const DEFAULT_CLAIM_DAYS = 30;
+  .refine((v) => v.network !== undefined || v.kind !== undefined || v.claimWindowDays !== undefined, "Nothing to change");
 
 /**
  * Updates a batch's network/asset — the fields the New Batch form collects
@@ -66,7 +67,7 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.message }, { status: 400 });
   }
-  const { network, assetCode, assetIssuer, kind } = parsed.data;
+  const { network, assetCode, assetIssuer, kind, claimWindowDays } = parsed.data;
 
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
@@ -90,6 +91,19 @@ export async function PATCH(
   });
   for (const run of waiting) await cancelRun(run.id);
 
+  // Changing only the claim window does not affect any check result.
+  if (claimWindowDays !== undefined && network === undefined && kind === undefined) {
+    if (batch.kind !== "CLAIMABLE_BALANCE") {
+      return NextResponse.json({ error: "Only claimable balance batches have a claim window" }, { status: 400 });
+    }
+    const updated = await prisma.batch.update({
+      where: { id: batch.id },
+      data: { claimWindowDays, claimExpiresAt: claimDeadline(claimWindowDays) },
+      include: { recipients: { orderBy: { rowIndex: "asc" } }, attempts: { include: { items: true } } },
+    });
+    return NextResponse.json({ batch: updated });
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     await tx.recipient.updateMany({
       where: { batchId: batch.id, addressValid: true, isDuplicate: false },
@@ -108,9 +122,10 @@ export async function PATCH(
       data: {
         ...(network !== undefined ? { network, assetCode: assetCode || null, assetIssuer: assetIssuer || null } : {}),
         kind: nextKind,
+        claimWindowDays: nextKind === "CLAIMABLE_BALANCE" ? (claimWindowDays ?? batch.claimWindowDays ?? DEFAULT_CLAIM_WINDOW_DAYS) : null,
         claimExpiresAt:
           nextKind === "CLAIMABLE_BALANCE"
-            ? (batch.claimExpiresAt ?? new Date(Date.now() + DEFAULT_CLAIM_DAYS * 86_400_000))
+            ? claimDeadline(claimWindowDays ?? batch.claimWindowDays ?? DEFAULT_CLAIM_WINDOW_DAYS)
             : null,
         status: "VALIDATED",
       },

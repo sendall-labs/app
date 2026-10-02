@@ -14,6 +14,7 @@ export type PreparedSummary = {
   asset: string;
   network: string;
   kind: string;
+  claimExpiresAt?: string | null;
 };
 
 export type PreflightInfo = {

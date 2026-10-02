@@ -47,6 +47,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ bat
         asset: batch.assetCode ?? "XLM",
         network: batch.network,
         kind: batch.kind,
+        claimExpiresAt: prepared.claimExpiresAt ?? null,
       },
       preflight: prepared.preflight ?? null,
     });

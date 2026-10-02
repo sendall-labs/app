@@ -1,10 +1,10 @@
 import { prisma } from "@/lib/db/prisma";
+import { claimDeadline, DEFAULT_CLAIM_WINDOW_DAYS } from "./claimWindow";
 import { isConvertible, MOVED_NOTE } from "./convertRules";
 import { DistributionError } from "./errors";
 
 export { isConvertible, MOVED_NOTE };
 
-const DEFAULT_CLAIM_DAYS = 30;
 /**
  * Starts a claimable balance batch from a payment batch's rows that could
  * not receive the asset. The original rows are marked as moved so they
@@ -36,7 +36,8 @@ export async function convertFailedToClaimable(batchId: string, ownerPublicKey: 
         assetCode: batch.assetCode,
         assetIssuer: batch.assetIssuer,
         kind: "CLAIMABLE_BALANCE",
-        claimExpiresAt: new Date(Date.now() + DEFAULT_CLAIM_DAYS * 86_400_000),
+        claimWindowDays: DEFAULT_CLAIM_WINDOW_DAYS,
+        claimExpiresAt: claimDeadline(DEFAULT_CLAIM_WINDOW_DAYS),
         csvFileName: batch.csvFileName ? `${batch.csvFileName} (claimable)` : null,
         status: "VALIDATED",
         recipients: {

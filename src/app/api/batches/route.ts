@@ -5,6 +5,7 @@ import { getSessionPublicKey } from "@/lib/auth/requireSession";
 import { getOrCreateAnonId } from "@/lib/auth/requireAnonSession";
 import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
+import { claimDeadline, DEFAULT_CLAIM_WINDOW_DAYS } from "@/lib/distribution/claimWindow";
 import { parseRecipientsCsv } from "@/lib/csv/parse";
 import { validateRecipients } from "@/lib/stellar/validation";
 
@@ -29,8 +30,7 @@ const createBatchSchema = z.object({
   kind: z.enum(["PAYMENT", "CLAIMABLE_BALANCE"]).optional(),
 });
 
-// Default claim window for a new claimable balance batch (PRD FR-3.2).
-const DEFAULT_CLAIM_DAYS = 30;
+
 
 export async function GET() {
   const access = await resolveBatchAccess();
@@ -101,7 +101,8 @@ export async function POST(request: Request) {
       assetIssuer: assetIssuer || null,
       csvFileName,
       kind,
-      claimExpiresAt: kind === "CLAIMABLE_BALANCE" ? new Date(Date.now() + DEFAULT_CLAIM_DAYS * 86_400_000) : null,
+      claimWindowDays: kind === "CLAIMABLE_BALANCE" ? DEFAULT_CLAIM_WINDOW_DAYS : null,
+      claimExpiresAt: kind === "CLAIMABLE_BALANCE" ? claimDeadline(DEFAULT_CLAIM_WINDOW_DAYS) : null,
       status: "VALIDATED",
       recipients: {
         create: validated.map((r) => ({

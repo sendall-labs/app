@@ -26,3 +26,12 @@ describe("stroop math", () => {
     expect(fromStroops(claimableBalanceReserve(300, BigInt(5_000_000)))).toBe("300");
   });
 });
+
+describe("claim window", async () => {
+  const { claimDeadline, CLAIM_WINDOW_OPTIONS, DEFAULT_CLAIM_WINDOW_DAYS } = await import("./claimWindow");
+  it("offers 7, 30 and 90 days with 30 as default", () => {
+    expect(CLAIM_WINDOW_OPTIONS).toEqual([7, 30, 90]);
+    expect(DEFAULT_CLAIM_WINDOW_DAYS).toBe(30);
+    expect(claimDeadline(7, new Date("2026-01-01T00:00:00Z")).toISOString()).toBe("2026-01-08T00:00:00.000Z");
+  });
+});

@@ -13,6 +13,7 @@ import { useDistributionRun, type RunPhase } from "@/components/distribution/use
 import { DistributionProgress } from "@/components/distribution/DistributionProgress";
 import { KindBadge } from "@/components/batches/KindBadge";
 import { KindSwitch } from "@/components/batches/KindSwitch";
+import { ClaimWindowPicker } from "@/components/batches/ClaimWindowPicker";
 import { isConvertible } from "@/lib/distribution/convertRules";
 import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
 
@@ -64,6 +65,7 @@ type Batch = {
   runs?: RunSummary[];
   kind?: "PAYMENT" | "CLAIMABLE_BALANCE";
   claimExpiresAt?: string | null;
+  claimWindowDays?: number | null;
 };
 
 type EditableRow = {
@@ -556,6 +558,26 @@ export default function BatchReviewPage() {
     [batchId, load]
   );
 
+  const setClaimWindow = useCallback(
+    async (days: number) => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ claimWindowDays: days }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not change the claim window");
+        await load();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not change the claim window");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId, load]
+  );
+
   const convertFailed = useCallback(async () => {
     setBulkBusy("convert");
     try {
@@ -806,6 +828,15 @@ export default function BatchReviewPage() {
         <div className="mt-4">
           <KindSwitch value={kind} disabled={!canEdit || saving || anyBusy || distributionActive} onChange={(next) => void switchKind(next)} />
         </div>
+        {kind === "CLAIMABLE_BALANCE" && (
+          <div className="mt-4">
+            <ClaimWindowPicker
+              value={batch.claimWindowDays ?? 30}
+              disabled={!canEdit || saving || distributionActive}
+              onChange={(days) => void setClaimWindow(days)}
+            />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

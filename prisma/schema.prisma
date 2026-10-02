@@ -138,8 +138,10 @@ model Batch {
   csvFileName    String?
   kind           BatchKind   @default(PAYMENT)
   // Claimable balance batches only: the recipient can claim before this
-  // time, the sender can reclaim after it.
-  claimExpiresAt DateTime?
+  // time, the sender can reclaim after it. Fixed when a run is prepared,
+  // from claimWindowDays, so the window counts from sending.
+  claimExpiresAt  DateTime?
+  claimWindowDays Int?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
