@@ -35,7 +35,7 @@ Environment:
 ## E0 Foundation
 
 - [x] **T0.1** Branch `feat/sow2`, PRD, this tracker, exclude the draft notes from git.
-- [ ] **T0.2** Extract shared UI and helpers from `src/app/(app)/batches/[batchId]/page.tsx`. No behavior change.
+- [x] **T0.2** Extract shared UI and helpers from `src/app/(app)/batches/[batchId]/page.tsx`. No behavior change.
   - Move `KNOWN_ASSETS`, `findKnownAsset`, `issuerForNetwork` to `src/lib/stellar/assets.ts`.
   - Move the explorer link helpers to `src/lib/stellar/explorer.ts`.
   - Move `formatAmount` and `sumAmounts` to `src/lib/format.ts`.
@@ -197,3 +197,4 @@ Environment:
 ## Log
 
 - 2026-10-02 T0.1 done: branch, PRD, tracker.
+- 2026-10-02 T0.2 done: assets, explorer links, amount formatting and the Asset/Network fields moved out of the batch page into `src/lib/stellar/{assets,explorer}.ts`, `src/lib/format.ts`, `src/components/batches/AssetFields.tsx`. lint, tsc clean; vitest 47/47 (incl. live Testnet integration).
