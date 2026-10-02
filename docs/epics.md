@@ -28,7 +28,7 @@ Never:
 - store, request or transmit a user secret key.
 
 Environment:
-- Postgres runs locally (`brew services start postgresql@15`).
+- Postgres is the Docker container `multisend-dev-db` on port 5433. If it is down, run `open -a Docker`, then `docker start multisend-dev-db`.
 - Apply migrations with `npx prisma migrate dev`.
 - Run the dev server in the background for E2E work, and stop it afterwards.
 
@@ -46,7 +46,7 @@ Environment:
   - `src/lib/stellar/serviceAccounts.ts`: per-network sponsor M loaded from `SPONSOR_SECRET_TESTNET` / `SPONSOR_SECRET_PUBLIC`.
   - `scripts/bootstrap-testnet.ts`: create and friendbot-fund M, write the keys to `.env` if missing, provision the channel pool (T1.2) once it exists.
   - Document every new env var in `.env.example` with placeholder values only.
-- [ ] **T0.4** Prisma migration (additive; legacy models unchanged).
+- [x] **T0.4** Prisma migration (additive; legacy models unchanged).
   - `Batch`: add `kind BatchKind @default(PAYMENT)` and `claimExpiresAt`.
   - `Recipient`: add `deliveryMethod`, `claimableBalanceId`, `claimStatus`, `claimTxHash`, `claimedAt`.
   - New models `ChannelAccount`, `DistributionRun`, `ChannelTransaction`, `ChannelTransactionItem`, with the fields and state enums from PRD 3.2.
@@ -199,3 +199,4 @@ Environment:
 - 2026-10-02 T0.1 done: branch, PRD, tracker.
 - 2026-10-02 T0.2 done: assets, explorer links, amount formatting and the Asset/Network fields moved out of the batch page into `src/lib/stellar/{assets,explorer}.ts`, `src/lib/format.ts`, `src/components/batches/AssetFields.tsx`. lint, tsc clean; vitest 47/47 (incl. live Testnet integration).
 - 2026-10-02 T0.3 done: AES-256-GCM `serviceKeys.ts` (v1 format, tamper and wrong-key tests), `serviceAccounts.ts` (sponsor M from `SPONSOR_SECRET_<NETWORK>`), `npm run bootstrap:testnet` (idempotent; generated the encryption key and Testnet M `GDJDV3NU…UNQT`, funded 10,000 XLM). Decision: sponsor secret lives in host env, channel secrets will be encrypted in DB. Channel provisioning gets added to the script in T1.2. Added `tsx` dev dependency for scripts. lint, tsc clean; vitest 54/54.
+- 2026-10-03 T0.4 done: migration `20261002210258_sow2_channel_engine`, additive only (no drops or column changes). Adds Batch.kind and claimExpiresAt, recipient delivery and claim fields, and the ChannelAccount, DistributionRun, ChannelTransaction and ChannelTransactionItem models, with unique indexes on run idempotency key, setup hash, tx hash and (runId, chunkIndex) so duplicates fail at the DB. lint, tsc clean; vitest 54/54.

@@ -45,6 +45,68 @@ enum AttemptStatus {
   FAILED
 }
 
+// Phase 2: channel engine, claimable balances. See docs/prd.md section 3.
+
+enum BatchKind {
+  PAYMENT
+  CLAIMABLE_BALANCE
+}
+
+enum DeliveryMethod {
+  PAYMENT
+  CREATE_ACCOUNT
+  CLAIMABLE_BALANCE
+}
+
+enum ClaimStatus {
+  UNCLAIMED
+  CLAIMED
+  RECLAIMED
+}
+
+enum ChannelStatus {
+  AVAILABLE
+  RESERVED
+  SUBMITTED
+  AWAITING_CONFIRMATION
+  // Sequence moved unexpectedly or a submission is in an unknown state.
+  // Never handed out again until reconciled.
+  QUARANTINED
+}
+
+enum RunPurpose {
+  SEND
+  RECLAIM
+  REAUTHORIZE
+  CLEANUP
+}
+
+enum RunStatus {
+  CREATED
+  PAYMENTS_PREPARED
+  AWAITING_USER_SIGNATURE
+  SETUP_SUBMITTED
+  SETUP_CONFIRMED
+  PAYMENTS_SUBMITTING
+  COMPLETED
+  PARTIALLY_FAILED
+  FAILED
+  EXPIRED
+}
+
+enum ChannelTxStatus {
+  PREPARED
+  SUBMITTING
+  SUCCESS
+  FAILED
+  // Reached the ledger and failed: its preAuthTx signer is consumed, so it
+  // can only be retried with a new user authorization.
+  REAUTHORIZATION_REQUIRED
+  // Time bounds passed without being applied. Its signer may still sit on
+  // the sender until a cleanup run removes it.
+  EXPIRED
+}
+
 model RefreshToken {
   id             String    @id @default(cuid())
   ownerPublicKey String
@@ -74,11 +136,16 @@ model Batch {
   sourceAccount  String?
   status         BatchStatus @default(DRAFT)
   csvFileName    String?
+  kind           BatchKind   @default(PAYMENT)
+  // Claimable balance batches only: the recipient can claim before this
+  // time, the sender can reclaim after it.
+  claimExpiresAt DateTime?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
   recipients Recipient[]
   attempts   PaymentAttempt[]
+  runs       DistributionRun[]
 
   @@index([ownerPublicKey])
   @@index([anonId])
@@ -104,7 +171,14 @@ model Recipient {
   status       LineItemStatus @default(PENDING)
   errorMessage String?
 
+  deliveryMethod     DeliveryMethod?
+  claimableBalanceId String?
+  claimStatus        ClaimStatus?
+  claimTxHash        String?
+  claimedAt          DateTime?
+
   attemptItems PaymentAttemptItem[]
+  channelItems ChannelTransactionItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -177,4 +251,109 @@ model AddressListEntry {
   createdAt DateTime @default(now())
 
   @@index([listId])
+}
+
+// Sendall-owned transaction source accounts. They only supply sequence
+// numbers; every operation they carry is sourced from the sender and
+// authorized by a one-time preAuthTx signer. Secrets are AES-GCM
+// encrypted (lib/crypto/serviceKeys).
+model ChannelAccount {
+  id               String        @id @default(cuid())
+  network          Network
+  publicKey        String        @unique
+  encryptedSecret  String        @db.Text
+  status           ChannelStatus @default(AVAILABLE)
+  // The sequence number the reserved transaction was built with. If the
+  // account's sequence moves anywhere else, the authorization is void.
+  expectedSequence String?
+  runId            String?
+  transactionId    String?
+  lockedAt         DateTime?
+  expiresAt        DateTime?
+  lastError        String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([network, status])
+}
+
+// One authorization round: a setup transaction the sender signs once,
+// followed by the channel transactions it pre-authorizes.
+model DistributionRun {
+  id             String     @id @default(cuid())
+  batchId        String
+  batch          Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  purpose        RunPurpose @default(SEND)
+  idempotencyKey String     @unique
+  status         RunStatus  @default(CREATED)
+  network        Network
+  sourceAccount  String
+  sponsorAccount String
+  preAuthWeight  Int?
+  parentRunId    String?
+
+  setupXdr         String?   @db.Text
+  setupHash        String?   @unique
+  setupSignedXdr   String?   @db.Text
+  setupFeeBumpXdr  String?   @db.Text
+  setupTxHash      String?
+  setupMaxTime     DateTime?
+  setupSubmittedAt DateTime?
+  setupConfirmedAt DateTime?
+
+  // Benchmark clock: from the user's signature to the last confirmation.
+  signedAt     DateTime?
+  completedAt  DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  transactions ChannelTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([batchId])
+  @@index([status])
+}
+
+model ChannelTransaction {
+  id               String          @id @default(cuid())
+  runId            String
+  run              DistributionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  chunkIndex       Int
+  channelPublicKey String
+  channelSequence  String
+  // Exact XDR the setup pre-authorized. Never rebuilt.
+  unsignedInnerXdr String          @db.Text
+  transactionHash  String          @unique
+  feeBumpXdr       String?         @db.Text
+  stellarTxHash    String?
+  status           ChannelTxStatus @default(PREPARED)
+  attemptCount     Int             @default(0)
+  errorCode        String?
+  resultXdr        String?         @db.Text
+  maxTime          DateTime
+  createdAt        DateTime        @default(now())
+  submittedAt      DateTime?
+  confirmedAt      DateTime?
+
+  items ChannelTransactionItem[]
+
+  @@unique([runId, chunkIndex])
+}
+
+model ChannelTransactionItem {
+  id                 String             @id @default(cuid())
+  transactionId      String
+  transaction        ChannelTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  recipientId        String
+  recipient          Recipient          @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  operationIndex     Int
+  deliveryMethod     DeliveryMethod
+  status             ChannelTxStatus    @default(PREPARED)
+  resultCode         String?
+  claimableBalanceId String?
+
+  @@index([transactionId])
+  @@index([recipientId])
 }
