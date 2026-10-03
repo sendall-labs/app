@@ -10,7 +10,7 @@
 //   node e2e/demo/compose.mjs [out.mp4] [--zoom]
 // Needs ffmpeg on PATH. Reads DEMO_VIDEO_DIR/timeline.json.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const dir = process.env.DEMO_VIDEO_DIR ?? path.resolve(import.meta.dirname, "../../test-results/demo-video");
@@ -19,6 +19,8 @@ const withZoom = args.includes("--zoom");
 const out = path.resolve(args.find((a) => !a.startsWith("--")) ?? path.join(dir, "sendall-demo.mp4"));
 const timeline = JSON.parse(readFileSync(path.join(dir, "timeline.json"), "utf8"));
 const staged = path.join(dir, "composed-full.mp4");
+// A recording copied elsewhere still finds its screen file next to it.
+if (!existsSync(timeline.screen)) timeline.screen = path.join(dir, path.basename(timeline.screen));
 
 // Canvas and look.
 const CW = 1920, CH = 1200, PAD = 64, RADIUS = 16;
@@ -141,8 +143,14 @@ for (const m of detect.matchAll(/freeze_(start|end): ([\d.]+)/g)) {
 }
 if (s != null) stills.push({ start: s, end: duration });
 
-// Wallet approvals and zooms play whole.
-const protectedSpans = [...popups.map((p) => [p.start - 0.3, p.end + 0.8]), ...zooms.map((z) => [z.a - 0.2, z.d + 0.2])];
+// Wallet approvals, zooms and mouse moves play whole. A gliding cursor is
+// too small a change for freezedetect, so without this the cut would make
+// the cursor jump from click to click.
+const protectedSpans = [
+  ...popups.map((p) => [p.start - 0.3, p.end + 0.8]),
+  ...zooms.map((z) => [z.a - 0.2, z.d + 0.2]),
+  ...(timeline.cursor ?? []).map((m) => [m.start - 0.4, m.end + 0.6]),
+];
 // A still stretch keeps its first 2.8 s so captions stay readable.
 const cuts = [...timeline.skips.map((w) => [w.start + KEEP, w.end - KEEP]), ...stills.map((st) => [st.start + 2.8, st.end - KEEP])]
   .filter(([a, b]) => b - a > 0.3)
