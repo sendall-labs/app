@@ -1,20 +1,22 @@
 // Builds the final demo video from a screen recording made with
 // playwright.demo.config.ts, in the style of Screen Studio:
 //   1. crops the screen to the browser window,
-//   2. zooms in smoothly where the mouse works and follows it, zooming back
-//      out when it rests,
+//   2. with --zoom, zooms in smoothly where the mouse works and follows it,
+//      zooming back out when it rests,
 //   3. sets the window with rounded corners and a shadow on a background,
 //   4. cuts network waits (marked in the spec) and long still stretches,
 //      never cutting into a wallet approval or a zoom.
 //
-//   node e2e/demo/compose.mjs [out.mp4]
+//   node e2e/demo/compose.mjs [out.mp4] [--zoom]
 // Needs ffmpeg on PATH. Reads DEMO_VIDEO_DIR/timeline.json.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const dir = process.env.DEMO_VIDEO_DIR ?? path.resolve(import.meta.dirname, "../../test-results/demo-video");
-const out = path.resolve(process.argv[2] ?? path.join(dir, "sendall-demo.mp4"));
+const args = process.argv.slice(2);
+const withZoom = args.includes("--zoom");
+const out = path.resolve(args.find((a) => !a.startsWith("--")) ?? path.join(dir, "sendall-demo.mp4"));
 const timeline = JSON.parse(readFileSync(path.join(dir, "timeline.json"), "utf8"));
 const staged = path.join(dir, "composed-full.mp4");
 
@@ -45,12 +47,12 @@ const scale = Math.min((CW - 2 * PAD) / win.width, (CH - 2 * PAD) / win.height);
 const VW = even(win.width * scale), VH = even(win.height * scale);
 const VX = (CW - VW) / 2, VY = (CH - VH) / 2;
 // Zoom works on a sharper copy of the window so zoomed text stays crisp.
-const BW = even(VW * ZOOM), BH = even(VH * ZOOM);
+const BW = withZoom ? even(VW * ZOOM) : VW, BH = withZoom ? even(VH * ZOOM) : VH;
 const toBase = (x, y) => [((x - win.left) / win.width) * BW, ((y - win.top) / win.height) * BH];
 
 // --- 2. Zoom path ----------------------------------------------------------
 
-const moves = (timeline.cursor ?? []).filter((m) => m.x >= win.left && m.x <= win.left + win.width && m.y >= win.top && m.y <= win.top + win.height);
+const moves = (withZoom ? (timeline.cursor ?? []) : []).filter((m) => m.x >= win.left && m.x <= win.left + win.width && m.y >= win.top && m.y <= win.top + win.height);
 const bursts = [];
 for (const m of moves) {
   const last = bursts.at(-1);
@@ -112,7 +114,8 @@ ffmpeg(["-f", "lavfi", "-i", `color=black:s=${VW + 2 * SB}x${VH + 2 * SB}`, "-fr
 
 const graph = [
   `[0:v]crop=${crop},scale=${BW}:${BH}:flags=lanczos,fps=30,` +
-    `zoompan=z='${zoomExpr}':x='${zx}':y='${zy}':d=1:s=${VW}x${VH}:fps=30,format=rgba[win]`,
+    (withZoom ? `zoompan=z='${zoomExpr}':x='${zx}':y='${zy}':d=1:s=${VW}x${VH}:fps=30,` : "") +
+    `format=rgba[win]`,
   `[3:v]format=gray[m]`,
   `[win][m]alphamerge[rwin]`,
   `[1:v][2:v]overlay=${VX - SB}:${VY - SB + 14}[bgs]`,
