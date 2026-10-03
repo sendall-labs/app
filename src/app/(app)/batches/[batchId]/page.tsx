@@ -1049,7 +1049,18 @@ export default function BatchReviewPage() {
           syncing={syncingClaims}
           onRefresh={() => void syncClaims()}
           action={
-            claims.unclaimed > 0 && claims.expiresAt && new Date(claims.expiresAt) <= new Date() ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const link = `${window.location.origin}/claim?batch=${batchId}`;
+                  void navigator.clipboard.writeText(link).then(() => toast.success("Claim link copied"));
+                }}
+                className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+              >
+                Copy claim link
+              </button>
+              {claims.unclaimed > 0 && claims.expiresAt && new Date(claims.expiresAt) <= new Date() ? (
               <button
                 type="button"
                 onClick={() => void distribution.reclaim(batchId)}
@@ -1058,7 +1069,8 @@ export default function BatchReviewPage() {
               >
                 Reclaim {claims.unclaimed} unclaimed
               </button>
-            ) : undefined
+              ) : null}
+            </div>
           }
         />
       )}
