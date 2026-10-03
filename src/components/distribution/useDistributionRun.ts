@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunView } from "@/lib/distribution/batchRuns";
+import type { Network } from "@/generated/prisma/enums";
+import { networkMismatch } from "@/lib/wallet/networkGuard";
 
 // idle -> preparing -> review -> awaiting-signature -> authorizing -> running -> done
 // A wallet rejection goes back to review; anything that stops the flow
@@ -69,12 +71,14 @@ const SETUP_WINDOW_MS = 5 * 60 * 1000;
  * run moving.
  */
 export function useDistributionRun(params: {
-  signTransaction: (xdr: string) => Promise<string>;
+  network: Network;
+  signTransaction: (xdr: string, network?: Network) => Promise<string>;
+  walletNetworkPassphrase: () => Promise<string | null>;
   ensureClaimed: () => Promise<void>;
   onFinished?: (run: RunView) => void;
   onError?: (error: RunRequestError) => void;
 }) {
-  const { signTransaction, ensureClaimed, onFinished, onError } = params;
+  const { network, signTransaction, walletNetworkPassphrase, ensureClaimed, onFinished, onError } = params;
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [run, setRun] = useState<RunView | null>(null);
   const [review, setReview] = useState<ReviewInfo | null>(null);
@@ -155,10 +159,18 @@ export function useDistributionRun(params: {
   const approve = useCallback(async () => {
     if (!review) return;
     setError(null);
+    // Never ask a wallet on the wrong network to sign: a Testnet habit
+    // must not turn into a Mainnet mistake, or the other way round.
+    const mismatch = networkMismatch(network, await walletNetworkPassphrase());
+    if (mismatch) {
+      setError(new RunRequestError(mismatch, "WALLET_NETWORK_MISMATCH"));
+      setPhase("review");
+      return;
+    }
     setPhase("awaiting-signature");
     let signed: string;
     try {
-      signed = await signTransaction(review.setupXdr);
+      signed = await signTransaction(review.setupXdr, network);
     } catch {
       const e = new RunRequestError("The wallet did not approve. Nothing was sent; you can approve again or cancel.", "WALLET_REJECTED");
       setError(e);
@@ -173,7 +185,7 @@ export function useDistributionRun(params: {
     } catch (err) {
       fail(err);
     }
-  }, [review, signTransaction, fail]);
+  }, [review, signTransaction, walletNetworkPassphrase, network, fail]);
 
   /** Backs out at the review step; the rows become ready again. */
   const cancel = useCallback(async () => {

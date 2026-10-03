@@ -15,7 +15,10 @@ type WalletContextValue = {
   // alone just reads the wallet's address and does not authenticate.
   login: () => Promise<string>;
   disconnect: () => Promise<void>;
-  signTransaction: (xdr: string) => Promise<string>;
+  // Signs for `network` when given (the batch's), else the app default.
+  signTransaction: (xdr: string, network?: Network) => Promise<string>;
+  // The passphrase the wallet itself is on, or null if it cannot say.
+  walletNetworkPassphrase: () => Promise<string | null>;
   signMessage: (message: string) => Promise<string>;
 };
 
@@ -110,17 +113,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [updateAddress]);
 
   const signTransaction = useCallback(
-    async (xdr: string) => {
+    async (xdr: string, forNetwork?: Network) => {
       const currentAddress = addressRef.current;
       if (!currentAddress) throw new Error("No wallet connected");
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         address: currentAddress,
-        networkPassphrase: networkToKitNetwork(network),
+        networkPassphrase: networkToKitNetwork(forNetwork ?? network),
       });
       return signedTxXdr;
     },
     [network]
   );
+
+  const walletNetworkPassphrase = useCallback(async () => {
+    try {
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      return networkPassphrase || null;
+    } catch {
+      return null; // not every wallet reports its network
+    }
+  }, []);
 
   const signMessage = useCallback(
     async (message: string) => {
@@ -145,9 +157,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       login,
       disconnect,
       signTransaction,
+      walletNetworkPassphrase,
       signMessage,
     }),
-    [network, address, connecting, connect, login, disconnect, signTransaction, signMessage]
+    [network, address, connecting, connect, login, disconnect, signTransaction, walletNetworkPassphrase, signMessage]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

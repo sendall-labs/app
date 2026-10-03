@@ -199,7 +199,7 @@ export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
   const isDemo = useSearchParams().get("demo") === "1";
   const router = useRouter();
-  const { login, signTransaction } = useWallet();
+  const { login, signTransaction, walletNetworkPassphrase } = useWallet();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
   const [busyRowIds, setBusyRowIds] = useState<Set<string>>(new Set());
@@ -621,8 +621,11 @@ export default function BatchReviewPage() {
     }
   }, [batchId, ensureClaimed, router]);
 
+  const batchNetwork = (batch?.network ?? "TESTNET") as "TESTNET" | "PUBLIC";
   const distribution = useDistributionRun({
+    network: batchNetwork,
     signTransaction,
+    walletNetworkPassphrase,
     ensureClaimed,
     onFinished: (run) => {
       void load().then(() => setPinnedStage(null));
@@ -664,7 +667,7 @@ export default function BatchReviewPage() {
         // A payment chunk authorized via the master tx's preAuthTx
         // signers (see txBuilder.ts) needs no wallet signature — submit
         // it exactly as built.
-        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr, batchNetwork) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -681,7 +684,7 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed, distribution]);
+  }, [batchId, load, signTransaction, ensureClaimed, distribution, batchNetwork]);
 
   const retryFailed = useCallback(async () => {
     const lastRun = batch?.runs?.find((r) => r.purpose === "SEND" || r.purpose === "REAUTHORIZE");
@@ -700,7 +703,7 @@ export default function BatchReviewPage() {
         // A payment chunk authorized via the master tx's preAuthTx
         // signers (see txBuilder.ts) needs no wallet signature — submit
         // it exactly as built.
-        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr, batchNetwork) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -717,7 +720,7 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed, batch, distribution]);
+  }, [batchId, load, signTransaction, ensureClaimed, batch, distribution, batchNetwork]);
 
   const refreshableCount = useMemo(() => {
     if (!batch) return 0;

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { explorerTxUrl } from "@/lib/stellar/explorer";
+import { networkMismatch } from "@/lib/wallet/networkGuard";
 
 type Item = {
   id: string;
@@ -27,7 +28,7 @@ function trim(amount: string) {
 }
 
 export function ClaimClient({ network, batchId }: { network: "TESTNET" | "PUBLIC"; batchId?: string }) {
-  const { address, connect, connecting, setNetwork, signTransaction } = useWallet();
+  const { address, connect, connecting, setNetwork, signTransaction, walletNetworkPassphrase } = useWallet();
   const [list, setList] = useState<List | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -74,7 +75,9 @@ export function ClaimClient({ network, batchId }: { network: "TESTNET" | "PUBLIC
       });
       const built = await build.json();
       if (!build.ok) throw new Error(built.error ?? "Could not prepare the claim");
-      const signedXdr = await signTransaction(built.xdr);
+      const mismatch = networkMismatch(network, await walletNetworkPassphrase());
+      if (mismatch) throw new Error(mismatch);
+      const signedXdr = await signTransaction(built.xdr, network);
       const submit = await fetch("/api/claim/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -90,7 +93,7 @@ export function ClaimClient({ network, batchId }: { network: "TESTNET" | "PUBLIC
     } finally {
       setClaiming(false);
     }
-  }, [address, network, selected, signTransaction, load]);
+  }, [address, network, selected, signTransaction, walletNetworkPassphrase, load]);
 
   const items = list?.items ?? [];
   const chosen = items.filter((i) => selected.has(i.id));
