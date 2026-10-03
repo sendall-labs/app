@@ -28,8 +28,13 @@ type WalletContextValue = {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
-const DEFAULT_NETWORK: Network =
-  (process.env.NEXT_PUBLIC_DEFAULT_NETWORK as Network | undefined) ?? "TESTNET";
+// "PUBLIC" (or "MAINNET") opens on Mainnet; anything else, including an
+// empty value, opens on Testnet.
+function defaultNetwork(raw = process.env.NEXT_PUBLIC_DEFAULT_NETWORK): Network {
+  const value = raw?.trim().toUpperCase();
+  return value === "PUBLIC" || value === "MAINNET" ? "PUBLIC" : "TESTNET";
+}
+const DEFAULT_NETWORK = defaultNetwork();
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [network, setNetwork] = useState<Network>(DEFAULT_NETWORK);
