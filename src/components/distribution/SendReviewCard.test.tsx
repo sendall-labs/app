@@ -29,28 +29,17 @@ describe("SendReviewCard", () => {
     expect(screen.getByText(/^[34]:\d\d$/)).toBeTruthy();
   });
 
-  it("marks Mainnet as real funds and needs MAINNET typed before approving", () => {
+  it("shows Mainnet as the network and approves straight away", () => {
     const onApprove = vi.fn();
     const review = { ...base, summary: { ...base.summary!, network: "PUBLIC", kind: "PAYMENT" } };
     render(<SendReviewCard network="PUBLIC" review={review} error={null} busy={false} onApprove={onApprove} onCancel={() => {}} />);
-    expect(screen.getByText("Mainnet (real funds)")).toBeTruthy();
+    expect(screen.getByText("Mainnet")).toBeTruthy();
     expect(screen.getByText("Direct payments")).toBeTruthy();
     expect(screen.queryByText("Reserve locked")).toBeNull();
     const approve = screen.getByRole("button", { name: "Approve in wallet" }) as HTMLButtonElement;
-    expect(approve.disabled).toBe(true);
-    const input = screen.getByLabelText("Type MAINNET to confirm");
-    fireEvent.change(input, { target: { value: "mainnet?" } });
-    expect(approve.disabled).toBe(true);
-    fireEvent.change(input, { target: { value: "mainnet" } });
     expect(approve.disabled).toBe(false);
     fireEvent.click(approve);
     expect(onApprove).toHaveBeenCalledOnce();
-  });
-
-  it("needs no typed confirmation on Testnet", () => {
-    render(<SendReviewCard network="TESTNET" review={base} error={null} busy={false} onApprove={() => {}} onCancel={() => {}} />);
-    expect(screen.queryByLabelText("Type MAINNET to confirm")).toBeNull();
-    expect((screen.getByRole("button", { name: "Approve in wallet" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("approves, cancels, and shows a wallet rejection", () => {
