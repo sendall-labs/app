@@ -5,7 +5,12 @@ import { decodePerOperationResults } from "@/lib/stellar/submit";
 
 // Highest per-operation fee the sponsor will bid, in stroops. Keeps a
 // surge from draining the sponsor; the run waits rather than overpays.
-export const FEE_CAP_PER_OP = BigInt(process.env.FEE_CAP_STROOPS_PER_OP ?? 10_000);
+// FEE_CAP_STROOPS_PER_OP_<NETWORK> overrides the shared default per network.
+export function feeCapPerOp(network: Network): bigint {
+  // Blank values (as in .env.example) count as unset, never as a 0 cap.
+  const pick = (v: string | undefined) => (v && v.trim() ? v.trim() : undefined);
+  return BigInt(pick(process.env[`FEE_CAP_STROOPS_PER_OP_${network}`]) ?? pick(process.env.FEE_CAP_STROOPS_PER_OP) ?? 10_000);
+}
 
 const POLL_INTERVAL_MS = 1_000;
 const POLL_TIMEOUT_MS = 45_000;
@@ -45,7 +50,8 @@ export async function feeRatePerOp(network: Network, attempt = 0): Promise<strin
     // keep the floor
   }
   rate = rate * BigInt(2) ** BigInt(Math.min(attempt, 10));
-  return (rate > FEE_CAP_PER_OP ? FEE_CAP_PER_OP : rate).toString();
+  const cap = feeCapPerOp(network);
+  return (rate > cap ? cap : rate).toString();
 }
 
 /** Wraps a fully signed inner transaction so the sponsor pays its fee. */

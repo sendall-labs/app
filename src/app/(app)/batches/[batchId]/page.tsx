@@ -582,6 +582,24 @@ export default function BatchReviewPage() {
     [batchId, load]
   );
 
+  // Can Sendall send on this batch's network right now (e.g. Mainnet set up)?
+  const [service, setService] = useState<{ network: string; ready: boolean } | null>(null);
+  const statusNetwork = batch?.network;
+  useEffect(() => {
+    if (!statusNetwork) return;
+    let cancelled = false;
+    fetch(`/api/service/status?network=${statusNetwork}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setService({ network: data.network, ready: data.ready });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [statusNetwork]);
+  const serviceUnavailable = SEND_ENGINE === "channels" && service?.network === batch?.network && service?.ready === false;
+
   const [claims, setClaims] = useState<ClaimSummaryView | null>(null);
   const [syncingClaims, setSyncingClaims] = useState(false);
   const syncClaims = useCallback(async () => {
@@ -874,6 +892,12 @@ export default function BatchReviewPage() {
         )}
       </div>
 
+      {serviceUnavailable && (
+        <div role="status" className="rounded-2xl border border-warning/30 bg-warning-soft px-5 py-3 text-sm text-warning">
+          Sending on {batch.network === "PUBLIC" ? "Mainnet" : "Testnet"} is not available yet. You can prepare and check this list now and send it once it is.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {canEdit ? (
           <NetworkField
@@ -1018,7 +1042,7 @@ export default function BatchReviewPage() {
                 <button
                   ref={signSendBtnRef}
                   onClick={prepareAndSend}
-                  disabled={anyBusy || distributionActive}
+                  disabled={anyBusy || distributionActive || serviceUnavailable}
                   className={`accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 ${
                     demoHighlightSignSend ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
                   }`}
