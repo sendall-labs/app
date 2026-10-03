@@ -1,7 +1,6 @@
-// Builds the final demo video from a recording made with
+// Builds the final demo video from a screen recording made with
 // playwright.demo.config.ts:
-//   1. lays each Freighter popup over the app video at the moment it was
-//      open, top right like the real extension popup,
+//   1. crops the screen to the browser window and scales it to 1920 wide,
 //   2. cuts network waits (marked in the spec) and any other long still
 //      stretch down to a moment, keeping wallet popups whole.
 //
@@ -16,28 +15,20 @@ const out = path.resolve(process.argv[2] ?? path.join(dir, "sendall-demo.mp4"));
 const timeline = JSON.parse(readFileSync(path.join(dir, "timeline.json"), "utf8"));
 const staged = path.join(dir, "composed-full.mp4");
 
-const W = 1920, H = 1080, SCALE = W / 1536; // app recorded at 1536x864
-const PW = Math.round(360 * SCALE), PH = Math.round(600 * SCALE);
-// Playwright scales the 360x600 popup up to the frame height and puts it
-// top left of a 1536x864 frame.
-const POP_CROP = `${Math.round((360 * 864) / 600)}:864:0:0`;
 const KEEP = 0.6; // seconds kept at each end of a cut wait
 const STILL = 3.5; // a still stretch longer than this is cut too
 
 const ffmpeg = (args) => execFileSync("ffmpeg", ["-v", "error", "-y", ...args], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 26 }).toString();
+const probe = (file, entries) => execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", entries, "-of", "csv=p=0", file]).toString().trim();
 
-// 1. Overlay the popups.
+// 1. Crop to the browser window (screen points to captured pixels).
+const [capturedWidth] = probe(timeline.screen, "stream=width,height").split(",").map(Number);
+const k = capturedWidth / timeline.window.screenWidth;
+const even = (n) => Math.round(n / 2) * 2;
+const w = timeline.window;
+const crop = `${even(w.width * k)}:${even(w.height * k)}:${even(w.left * k)}:${even(w.top * k)}`;
+ffmpeg(["-i", timeline.screen, "-vf", `crop=${crop},scale=1920:-2:flags=lanczos,fps=30`, "-an", "-c:v", "libx264", "-crf", "16", "-preset", "fast", "-pix_fmt", "yuv420p", staged]);
 const popups = timeline.popups.filter((p) => p.end != null);
-const inputs = ["-i", timeline.main, ...popups.flatMap((p) => ["-i", p.video])];
-let graph = `[0:v]fps=30,scale=${W}:${H}:flags=lanczos,setsar=1[v0]`;
-popups.forEach((p, i) => {
-  const n = i + 1;
-  graph +=
-    `;[${n}:v]fps=30,crop=${POP_CROP},scale=${PW}:${PH}:flags=lanczos,` +
-    `pad=${PW + 4}:${PH + 4}:2:2:color=0x4a4a55,setpts=PTS-STARTPTS+${p.start.toFixed(3)}/TB[p${n}]` +
-    `;[v${i}][p${n}]overlay=x=${W - PW - 4 - 28}:y=28:enable='between(t,${p.start.toFixed(3)},${p.end.toFixed(3)})':eof_action=pass[v${n}]`;
-});
-ffmpeg([...inputs, "-filter_complex", graph, "-map", `[v${popups.length}]`, "-an", "-c:v", "libx264", "-crf", "16", "-preset", "fast", "-pix_fmt", "yuv420p", staged]);
 
 // 2. Decide what to cut.
 const duration = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", staged]).toString());
