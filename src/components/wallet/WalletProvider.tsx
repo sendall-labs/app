@@ -8,6 +8,10 @@ type WalletContextValue = {
   network: Network;
   setNetwork: (network: Network) => void;
   address: string | null;
+  // True once the server session belongs to `address`. `address` is set as
+  // soon as the wallet answers, before the sign-in finishes, so anything that
+  // calls a session-gated API must wait for this instead.
+  authenticated: boolean;
   connecting: boolean;
   connect: () => Promise<string>;
   // Full SIWS handshake (connect + challenge + sign + verify) — the only
@@ -30,6 +34,7 @@ const DEFAULT_NETWORK: Network =
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [network, setNetwork] = useState<Network>(DEFAULT_NETWORK);
   const [address, setAddress] = useState<string | null>(null);
+  const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   // Mirrors `address`, but updated synchronously — signTransaction/signMessage
   // read this instead of the `address` state so a signMessage call made right
@@ -50,7 +55,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     fetch("/api/auth/session")
       .then((res) => res.json())
       .then((data) => {
-        if (data.publicKey) updateAddress(data.publicKey);
+        if (!data.publicKey) return;
+        updateAddress(data.publicKey);
+        setSessionKey(data.publicKey);
       })
       .catch(() => {});
   }, [updateAddress]);
@@ -104,12 +111,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     const { publicKey: verifiedKey } = await verifyRes.json();
     updateAddress(verifiedKey);
+    setSessionKey(verifiedKey);
     return verifiedKey;
   }, [connect, network, updateAddress]);
 
   const disconnect = useCallback(async () => {
     await StellarWalletsKit.disconnect();
     updateAddress(null);
+    setSessionKey(null);
   }, [updateAddress]);
 
   const signTransaction = useCallback(
@@ -152,6 +161,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       network,
       setNetwork,
       address,
+      authenticated: !!address && address === sessionKey,
       connecting,
       connect,
       login,
@@ -160,7 +170,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       walletNetworkPassphrase,
       signMessage,
     }),
-    [network, address, connecting, connect, login, disconnect, signTransaction, walletNetworkPassphrase, signMessage]
+    [network, address, sessionKey, connecting, connect, login, disconnect, signTransaction, walletNetworkPassphrase, signMessage]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

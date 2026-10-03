@@ -21,15 +21,16 @@ function formatAmount(raw: string): string {
 }
 
 export default function HomePage() {
-  const { address, network } = useWallet();
+  const { address, authenticated, network } = useWallet();
   const [balances, setBalances] = useState<Balance[] | null>(null);
   const [balancesError, setBalancesError] = useState<string | null>(null);
   const [batches, setBatches] = useState<BatchSummary[] | null>(null);
 
   useEffect(() => {
-    // Nothing to fetch, and the JSX below already branches on `address`
-    // first — no need to clear stale balance state here.
-    if (!address) return;
+    // Balances need the session, which lands after the wallet's address
+    // during sign-in. The JSX below already branches on `address` first, so
+    // there is no stale balance state to clear here.
+    if (!address || !authenticated) return;
     let cancelled = false;
     fetch(`/api/wallet/balances?network=${network}`)
       .then(async (res) => {
@@ -47,13 +48,15 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [address, network]);
+  }, [address, authenticated, network]);
 
+  // Refetched when the sign-in lands: drafts made before connecting are
+  // claimed by the wallet then, and its own batches become visible.
   useEffect(() => {
     fetch("/api/batches")
       .then((res) => res.json())
       .then((data) => setBatches(data.batches ?? []));
-  }, []);
+  }, [authenticated]);
 
   const recentBatches = (batches ?? []).slice(0, 5);
 
@@ -76,6 +79,10 @@ export default function HomePage() {
                 <ConnectButton />
               </div>
             </div>
+          ) : !authenticated ? (
+            <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-ink-muted">
+              Sign in with your wallet to see balances.
+            </p>
           ) : balancesError ? (
             <p className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4 text-sm text-danger">
               {balancesError}
