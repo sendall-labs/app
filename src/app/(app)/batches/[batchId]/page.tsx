@@ -1078,6 +1078,15 @@ export default function BatchReviewPage() {
       {displayedStage === "send" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap justify-end gap-2">
+            {(batch.status === "COMPLETED" || batch.status === "PARTIAL_FAILURE") && (
+              <a
+                href={`/api/batches/${batchId}/receipt`}
+                download
+                className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+              >
+                Download receipt (PDF)
+              </a>
+            )}
             {convertibleCount > 0 && (
               <button
                 onClick={convertFailed}

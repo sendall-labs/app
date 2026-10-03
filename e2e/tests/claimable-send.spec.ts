@@ -47,4 +47,12 @@ test("a claimable balance distribution goes out with one signature", async ({ co
   await page.addStyleTag({ content: "[data-sonner-toaster]{display:none !important}" });
   await claims.screenshot({ path: `${SHOTS}/claim-status.png` });
   await page.screenshot({ path: `${SHOTS}/claimable-sent.png`, fullPage: true });
+
+  // The receipt for this distribution downloads from the batch page.
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("link", { name: "Download receipt (PDF)" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^sendall-receipt-SND-[A-Z0-9]{8}\.pdf$/);
+  await download.saveAs(`${SHOTS}/receipt-claimable-sample.pdf`);
 });
