@@ -2,6 +2,23 @@
 
 Transaction hashes from runs on Stellar Testnet. Testnet is reset from time to time, so the screenshots in `docs/screenshots/sow2/` are kept as well.
 
+<!-- PAYMENT:START -->
+## Payments through the channel engine
+
+Run 2026-10-03 02:33 UTC. [`GDHYAW…EWEK`](https://stellar.expert/explorer/testnet/account/GDHYAWQMNA4ZGN6W6S3T75M27KQFGEVGNLZN5H5BODF66FY6RGCAEWEK) sends 2 XLM to each of 150 new accounts (account creation) with one wallet signature. Signature to last confirmation: 9.0 s.
+
+| Step | Transaction |
+|---|---|
+| Authorization: sponsored setup installing 2 one-time preAuthTx signers, fee paid by Sendall | [`85421ad19c79…`](https://stellar.expert/explorer/testnet/tx/85421ad19c79827c9e227ebd811b5fe84c415ab36c1187e7e7e95798db927e2c) (ledger 4994245) |
+| Chunk 1: 100 accounts created from a channel account, fee-bumped by Sendall | [`d92e1ec19725…`](https://stellar.expert/explorer/testnet/tx/d92e1ec19725d59ce4b9e162b4ac588e1cd92f191361444f92f869cf26ccd28b) |
+| Chunk 2: 50 accounts created from a second channel account, fee-bumped by Sendall | [`6d54207fb5f6…`](https://stellar.expert/explorer/testnet/tx/6d54207fb5f6ad1275b9df184754712297977fddb0d53c4d7ba38c06716f3d55) |
+
+Checks after the run:
+- The sender spent exactly 300 XLM for 150 x 2 XLM: no fees, no reserve.
+- PreAuthTx signers left on the sender: 0. Sponsored entries left: 0.
+Timings at 300 / 500 / 1,000 recipients, sequential vs channels: [benchmark.md](./benchmark.md).
+<!-- PAYMENT:END -->
+
 <!-- CLAIMABLE:START -->
 ## Claimable balances: create, claim, reclaim
 
