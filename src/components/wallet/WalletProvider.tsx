@@ -84,6 +84,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [updateAddress]);
 
+  // A signed message is only proof that the wallet holds the key; the
+  // server verifies it the same way on every network. So sign it on
+  // whatever network the wallet is on: asking for another one makes
+  // Freighter refuse ("Freighter is set to Main Net").
+  const messagePassphrase = useCallback(async () => {
+    try {
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      if (networkPassphrase) return networkPassphrase;
+    } catch {
+      // not every wallet reports its network
+    }
+    return networkToKitNetwork(network);
+  }, [network]);
+
   const login = useCallback(async () => {
     const publicKey = await connect();
 
@@ -97,7 +111,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const { signedMessage } = await StellarWalletsKit.signMessage(message, {
       address: publicKey,
-      networkPassphrase: networkToKitNetwork(network),
+      networkPassphrase: await messagePassphrase(),
     });
 
     const verifyRes = await fetch("/api/auth/verify", {
@@ -113,7 +127,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     updateAddress(verifiedKey);
     setSessionKey(verifiedKey);
     return verifiedKey;
-  }, [connect, network, updateAddress]);
+  }, [connect, messagePassphrase, updateAddress]);
 
   const disconnect = useCallback(async () => {
     await StellarWalletsKit.disconnect();
@@ -149,11 +163,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (!currentAddress) throw new Error("No wallet connected");
       const { signedMessage } = await StellarWalletsKit.signMessage(message, {
         address: currentAddress,
-        networkPassphrase: networkToKitNetwork(network),
+        networkPassphrase: await messagePassphrase(),
       });
       return signedMessage;
     },
-    [network]
+    [messagePassphrase]
   );
 
   const value = useMemo(
