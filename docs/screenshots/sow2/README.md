@@ -28,5 +28,3 @@ Captured by the Playwright suite (`npm run test:e2e`, Freighter on Testnet) unle
 | `claim-page-list.png` | Balances waiting for the recipient | claim-page |
 | `claim-page-done.png` | Claimed, with the transaction link | claim-page |
 | `mainnet-not-available.png` | Mainnet batch while Mainnet sending is not set up | mainnet-guard |
-| `mainnet-gate-locked.png` | Mainnet confirmation: approve locked | mainnet-gate (sample data) |
-| `mainnet-gate-confirmed.png` | Mainnet confirmation: MAINNET typed | mainnet-gate (sample data) |
