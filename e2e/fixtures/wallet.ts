@@ -14,9 +14,6 @@ export const WALLET_PUBLIC_KEY = process.env.E2E_WALLET_PUBLIC_KEY;
 // Popup timings are kept so compose.mjs never cuts into an approval.
 const DEMO = !!process.env.DEMO_VIDEO_DIR;
 export const demoPopups: { openedAt: number; closedAt?: number }[] = [];
-let demoPopupHook: ((popup: Page) => Promise<void>) | null = null;
-/** Runs on every wallet popup in demo mode (draws the demo cursor). */
-export const onDemoPopup = (hook: (popup: Page) => Promise<void>) => (demoPopupHook = hook);
 
 if (!fs.existsSync(path.join(EXTENSION_PATH, "manifest.json"))) {
   throw new Error(
@@ -63,7 +60,6 @@ export async function approveFreighterPopup(popup: Page): Promise<void> {
   }
   if (DEMO) {
     // Let the viewer read what is being approved.
-    await demoPopupHook?.(popup);
     await approveBtn.hover();
     await popup.waitForTimeout(1800);
   }

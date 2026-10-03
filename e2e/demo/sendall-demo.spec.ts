@@ -1,16 +1,17 @@
 // Product demo: records the screen during one continuous walkthrough of the
-// Phase 2 features with a real Freighter wallet on Testnet. Captions and a
-// cursor are drawn on the page so the video explains itself.
+// Phase 2 features with a real Freighter wallet on Testnet, moving the real
+// mouse. Captions are drawn on the page so the video explains itself.
 //   npx playwright test -c playwright.demo.config.ts && node e2e/demo/compose.mjs
-// Needs ffmpeg and Screen Recording permission for the terminal app. Leave
-// the screen alone while it runs.
+// Needs ffmpeg, Xcode command line tools, and Screen Recording and
+// Accessibility permission for the terminal app. Leave the mouse alone while
+// it runs.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import type { Page } from "@playwright/test";
-import { test, expect, approveWalletFlow, demoPopups, onDemoPopup } from "../fixtures/wallet";
-import { activateBrowser, fitWindow, installCursor, patchClicksToGlide, startScreenRecording } from "./screen";
+import { test, expect, approveWalletFlow, demoPopups } from "../fixtures/wallet";
+import { activateBrowser, checkRealMouse, cursorLog, fitWindow, startScreenRecording, useRealMouse } from "./screen";
 
 const seed = (script: string, ...args: string[]) =>
   JSON.parse(execFileSync("npx", ["tsx", path.resolve(__dirname, "../scripts", script), ...args], { encoding: "utf8" }).trim().split("\n").at(-1)!);
@@ -68,10 +69,9 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   const expiring = seed("seed-expiring-claimables.ts", "240");
 
   await context.clearCookies();
-  await installCursor(context);
-  onDemoPopup((popup) => installCursor(popup));
+  checkRealMouse();
   const page = context.pages()[0] ?? (await context.newPage());
-  patchClicksToGlide(page.locator("body"));
+  useRealMouse(page.locator("body"));
   const bounds = await fitWindow(page);
   await page.goto(`${baseURL}/home`);
   await hideToasts(page);
@@ -194,7 +194,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   }
 
   // Timeline for compose.mjs: the window to crop to, the wallet popups not
-  // to cut into, and the waits to cut.
+  // to cut into, the waits to cut, and the cursor moves to zoom on.
   const at = (ms: number) => (ms - startedAt) / 1000;
   writeFileSync(
     path.join(dir, "timeline.json"),
@@ -204,6 +204,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
         window: bounds,
         popups: demoPopups.map((p) => ({ start: at(p.openedAt), end: p.closedAt ? at(p.closedAt) : null })),
         skips,
+        cursor: cursorLog,
       },
       null,
       2
