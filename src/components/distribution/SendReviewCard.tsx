@@ -51,6 +51,7 @@ export function SendReviewCard({
   const s = review.summary;
   const p = review.preflight;
   const cleanup = review.purpose === "CLEANUP";
+  const reclaim = review.purpose === "RECLAIM";
   const mainnet = s?.network === "PUBLIC";
   const claimable = s?.kind === "CLAIMABLE_BALANCE";
 
@@ -59,12 +60,20 @@ export function SendReviewCard({
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold text-ink">
-            {cleanup ? "Remove leftover signers" : review.purpose === "REAUTHORIZE" ? "Send the failed rows again" : "Review and approve"}
+            {cleanup
+              ? "Remove leftover signers"
+              : reclaim
+                ? "Reclaim unclaimed balances"
+                : review.purpose === "REAUTHORIZE"
+                  ? "Send the failed rows again"
+                  : "Review and approve"}
           </h2>
           <p className="mt-0.5 text-xs text-ink-muted">
             {cleanup
               ? "One signature removes the temporary signers a past distribution could not use."
-              : "One wallet signature authorizes every transaction below. Nothing moves until you approve."}
+              : reclaim
+                ? "The claim window has closed. One signature brings every unclaimed balance back to your account."
+                : "One wallet signature authorizes every transaction below. Nothing moves until you approve."}
           </p>
         </div>
         <span className={`rounded-full px-3 py-1 font-mono text-xs tabular-nums ${expired ? "bg-danger-soft text-danger" : "bg-sidebar text-ink"}`}>
@@ -75,6 +84,11 @@ export function SendReviewCard({
       <dl className="mt-4 divide-y divide-hairline">
         {cleanup ? (
           <Row label="Signers to remove" value={review.signerCount ?? "…"} />
+        ) : reclaim ? (
+          <>
+            <Row label="Balances to reclaim" value={review.reclaimCount ?? "…"} hint="Their reserve is released as well" />
+            <Row label="Stellar transactions" value={review.transactionCount} />
+          </>
         ) : (
           <>
             {s && <Row label="Recipients" value={s.recipientCount.toLocaleString("en-US")} />}

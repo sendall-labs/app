@@ -553,9 +553,10 @@ export async function cancelRun(runId: string): Promise<DistributionRun> {
   await releaseRunChannels(runId);
   const items = await prisma.channelTransactionItem.findMany({ where: { transaction: { runId } }, select: { recipientId: true } });
   await prisma.channelTransactionItem.updateMany({ where: { transaction: { runId } }, data: { status: "EXPIRED", resultCode: "CANCELLED" } });
-  await prisma.recipient.updateMany({ where: { id: { in: items.map((i) => i.recipientId) } }, data: { status: "READY", errorMessage: null } });
   const run = await prisma.distributionRun.findUniqueOrThrow({ where: { id: runId } });
+  // Only a send puts rows in flight; a cancelled reclaim leaves them as they were.
   if (run.purpose === "SEND" || run.purpose === "REAUTHORIZE") {
+    await prisma.recipient.updateMany({ where: { id: { in: items.map((i) => i.recipientId) } }, data: { status: "READY", errorMessage: null } });
     await prisma.batch.update({ where: { id: run.batchId }, data: { status: "READY" } });
   }
   return run;

@@ -626,7 +626,9 @@ export default function BatchReviewPage() {
     ensureClaimed,
     onFinished: (run) => {
       void load().then(() => setPinnedStage(null));
-      if (run.status === "COMPLETED") toast.success(run.purpose === "CLEANUP" ? "Leftover signers removed" : "Distribution complete");
+      if (run.purpose === "RECLAIM") void syncClaims();
+      if (run.status === "COMPLETED")
+        toast.success(run.purpose === "CLEANUP" ? "Leftover signers removed" : run.purpose === "RECLAIM" ? "Unclaimed balances are back in your account" : "Distribution complete");
       else if (run.status === "PARTIALLY_FAILED") toast.warning("Some rows were not delivered. You can send them again.");
       else toast.error(run.errorMessage ?? "The distribution did not go through.");
     },
@@ -1042,7 +1044,23 @@ export default function BatchReviewPage() {
       )}
 
       {displayedStage === "send" && claims && claims.created > 0 && (
-        <ClaimStatusCard summary={claims} syncing={syncingClaims} onRefresh={() => void syncClaims()} />
+        <ClaimStatusCard
+          summary={claims}
+          syncing={syncingClaims}
+          onRefresh={() => void syncClaims()}
+          action={
+            claims.unclaimed > 0 && claims.expiresAt && new Date(claims.expiresAt) <= new Date() ? (
+              <button
+                type="button"
+                onClick={() => void distribution.reclaim(batchId)}
+                disabled={distributionActive}
+                className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Reclaim {claims.unclaimed} unclaimed
+              </button>
+            ) : undefined
+          }
+        />
       )}
 
       {displayedStage === "send" && (

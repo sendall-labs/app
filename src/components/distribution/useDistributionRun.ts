@@ -28,11 +28,12 @@ export type PreflightInfo = {
 export type ReviewInfo = {
   runId: string;
   setupXdr: string;
-  purpose: "SEND" | "REAUTHORIZE" | "CLEANUP";
+  purpose: "SEND" | "REAUTHORIZE" | "CLEANUP" | "RECLAIM";
   transactionCount: number;
   summary: PreparedSummary | null;
   preflight: PreflightInfo | null;
   signerCount?: number; // cleanup only
+  reclaimCount?: number; // reclaim only
   expiresAt: number;
 };
 
@@ -181,6 +182,7 @@ export function useDistributionRun(params: {
     setError(null);
     setPhase("idle");
     if (r && r.purpose !== "CLEANUP") {
+      // Send and reclaim runs hold channels; free them now.
       await fetch(`/api/runs/${r.runId}/cancel`, { method: "POST" }).catch(() => {});
     }
   }, [review]);
@@ -200,6 +202,31 @@ export function useDistributionRun(params: {
           transactionCount: next.transactionCount,
           summary: null,
           preflight: null,
+          expiresAt: Date.now() + SETUP_WINDOW_MS,
+        });
+      } catch (err) {
+        fail(err);
+      }
+    },
+    [ensureClaimed, toReview, fail]
+  );
+
+  /** Takes back every expired, unclaimed claimable balance of the batch. */
+  const reclaim = useCallback(
+    async (batchId: string) => {
+      setError(null);
+      setPhase("preparing");
+      try {
+        await ensureClaimed();
+        const p = await postJson(`/api/batches/${batchId}/reclaim`, { idempotencyKey: crypto.randomUUID() });
+        toReview({
+          runId: p.runId,
+          setupXdr: p.setupXdr,
+          purpose: "RECLAIM",
+          transactionCount: p.transactionCount,
+          summary: null,
+          preflight: null,
+          reclaimCount: p.count,
           expiresAt: Date.now() + SETUP_WINDOW_MS,
         });
       } catch (err) {
@@ -292,6 +319,7 @@ export function useDistributionRun(params: {
     approve,
     cancel,
     reauthorize,
+    reclaim,
     cleanup,
     watch,
     reset,
