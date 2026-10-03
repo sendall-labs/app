@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 export type ClaimSummaryView = {
   created: number;
   unclaimed: number;
@@ -9,9 +11,9 @@ export type ClaimSummaryView = {
   syncedAt: string;
 };
 
-function timeLeft(expiresAt: string | null) {
+function timeLeft(expiresAt: string | null, now: number) {
   if (!expiresAt) return null;
-  const ms = new Date(expiresAt).getTime() - Date.now();
+  const ms = new Date(expiresAt).getTime() - now;
   if (ms <= 0) return { expired: true, label: "Claim window closed" };
   const days = Math.floor(ms / 86_400_000);
   const hours = Math.floor((ms % 86_400_000) / 3_600_000);
@@ -36,13 +38,24 @@ export function ClaimStatusCard({
   syncing,
   onRefresh,
   action,
+  reclaimAction,
 }: {
   summary: ClaimSummaryView;
   syncing: boolean;
   onRefresh: () => void;
   action?: React.ReactNode;
+  // Shown only once the claim window has closed and something is unclaimed.
+  reclaimAction?: React.ReactNode;
 }) {
-  const left = timeLeft(summary.expiresAt);
+  // Keep the countdown live, so the card flips to "closed" (and offers the
+  // reclaim) while the page stays open.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  const left = timeLeft(summary.expiresAt, now);
+  const showReclaim = !!reclaimAction && !!left?.expired && summary.unclaimed > 0;
   const pct = summary.created > 0 ? Math.round((summary.claimed / summary.created) * 100) : 0;
   return (
     <section aria-label="Claim status" className="rounded-2xl border border-hairline bg-surface p-5 shadow-sm">
@@ -70,7 +83,12 @@ export function ClaimStatusCard({
         <Stat label="Claimed" value={summary.claimed} tone="text-success" />
         <Stat label="Reclaimed" value={summary.reclaimed} tone="text-warning" />
       </div>
-      {action && <div className="mt-4 flex justify-end">{action}</div>}
+      {(action || showReclaim) && (
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {action}
+          {showReclaim && reclaimAction}
+        </div>
+      )}
     </section>
   );
 }

@@ -142,6 +142,8 @@ export const test = base.extend<WalletFixtures>({
       // size, which reflows Freighter's layout unpredictably. The window
       // itself is still maximized via --start-maximized below.
       viewport: { width: 1280, height: 800 },
+      // Demo recordings (playwright.demo.config.ts) set DEMO_VIDEO_DIR.
+      ...(process.env.DEMO_VIDEO_DIR ? { recordVideo: { dir: process.env.DEMO_VIDEO_DIR, size: { width: 1280, height: 800 } } } : {}),
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
