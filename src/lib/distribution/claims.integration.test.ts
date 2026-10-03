@@ -69,5 +69,5 @@ describe.skipIf(!!process.env.CI)("claim status sync (Testnet)", () => {
     batchIds.push(batch.id);
     const res = await syncRoute(new Request("http://test", { method: "POST" }), { params: Promise.resolve({ batchId: batch.id }) });
     expect(res.status).toBe(400);
-  });
+  }, 60_000);
 });
