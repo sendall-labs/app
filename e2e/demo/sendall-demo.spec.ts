@@ -3,10 +3,11 @@
 // the page so the video explains itself.
 //   npx playwright test -c playwright.demo.config.ts
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { Keypair } from "@stellar/stellar-sdk";
 import type { Page } from "@playwright/test";
-import { test, expect, approveWalletFlow } from "../fixtures/wallet";
+import { test, expect, approveWalletFlow, demoPopups } from "../fixtures/wallet";
 
 const seed = (script: string, ...args: string[]) =>
   JSON.parse(execFileSync("npx", ["tsx", path.resolve(__dirname, "../scripts", script), ...args], { encoding: "utf8" }).trim().split("\n").at(-1)!);
@@ -40,7 +41,20 @@ async function caption(page: Page, text: string, hold = 2500) {
   await page.waitForTimeout(hold);
 }
 
-const hideToasts = (page: Page) => page.addStyleTag({ content: "[data-sonner-toaster]{display:none !important}" });
+// Waits on the network with nothing new on screen. compose.mjs cuts them
+// down to a moment, so the video only shows what changes.
+let startedAt = 0;
+const skips: { start: number; end: number }[] = [];
+async function quick<T>(fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    skips.push({ start: (start - startedAt) / 1000, end: (Date.now() - startedAt) / 1000 });
+  }
+}
+
+const hideToasts = (page: Page) => page.addStyleTag({ content: "[data-sonner-toaster],nextjs-portal{display:none !important}" });
 
 test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   test.setTimeout(15 * 60_000);
@@ -52,7 +66,9 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
 
   await context.clearCookies();
   const page = await context.newPage();
+  startedAt = Date.now();
   await page.goto(`${baseURL}/home`);
+  await hideToasts(page);
   await caption(page, "Sendall: bulk payments on Stellar. Phase 2 demo on Testnet.", 3500);
 
   await caption(page, "Connect the sender's wallet (Freighter).", 1500);
@@ -66,11 +82,11 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   await caption(page, "1. Bulk payment: paste a list of 150 recipients (new accounts, 1 XLM each).");
   const rows = Array.from({ length: 150 }, () => `${Keypair.random().publicKey()},1`).join("\n");
   await page.locator("textarea").first().fill(rows);
-  await expect(page.getByText("Ready", { exact: true }).first()).toBeVisible({ timeout: 90_000 });
+  await quick(() => expect(page.getByText("Ready", { exact: true }).first()).toBeVisible({ timeout: 90_000 }));
   await caption(page, "Every account is checked on-chain before anything is signed.");
   await page.getByRole("button", { name: "Next →", exact: true }).click();
   const sendAll = page.getByRole("button", { name: /Sign & send \(150\)/ });
-  await expect(sendAll).toBeVisible({ timeout: 60_000 });
+  await quick(() => expect(sendAll).toBeVisible({ timeout: 60_000 }));
   await page.waitForTimeout(1500);
   await approveWalletFlow(context, page, () => sendAll.click());
   const review = page.getByRole("region", { name: "Review before signing" });
@@ -94,9 +110,9 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   await page.locator("textarea").first().fill(Array.from({ length: 3 }, () => `${Keypair.random().publicKey()},2`).join("\n"));
   await page.getByRole("radio", { name: "7 days" }).click();
   await caption(page, "Recipients get 7 days to claim. After that, the sender can reclaim.");
-  await expect(page.getByText("Ready", { exact: true }).first()).toBeVisible({ timeout: 60_000 });
+  await quick(() => expect(page.getByText("Ready", { exact: true }).first()).toBeVisible({ timeout: 60_000 }));
   await page.getByRole("button", { name: "Next →", exact: true }).click();
-  await expect(page.getByText(/No account yet/).first()).toBeVisible({ timeout: 60_000 });
+  await quick(() => expect(page.getByText(/No account yet/).first()).toBeVisible({ timeout: 60_000 }));
   await caption(page, "No account or trustline needed today: these rows pass with a note.");
   await approveWalletFlow(context, page, () => page.getByRole("button", { name: /Sign & send \(3\)/ }).click());
   await expect(review).toBeVisible({ timeout: 60_000 });
@@ -104,7 +120,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   await approveWalletFlow(context, page, () => review.getByRole("button", { name: "Approve in wallet" }).click());
   await expect(panel.getByText("Distribution complete")).toBeVisible({ timeout: 120_000 });
   const claims = page.getByRole("region", { name: "Claim status" });
-  await expect(claims.getByText("Claimed 0 of 3")).toBeVisible({ timeout: 60_000 });
+  await quick(() => expect(claims.getByText("Claimed 0 of 3")).toBeVisible({ timeout: 60_000 }));
   await claims.scrollIntoViewIfNeeded();
   await caption(page, "Claim status per recipient. Share the claim link with recipients.", 4000);
 
@@ -118,7 +134,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   const connect = page.getByRole("button", { name: "Connect wallet" });
   await expect(waiting.or(connect)).toBeVisible({ timeout: 30_000 });
   if (await connect.isVisible()) await connect.click();
-  await expect(waiting.getByText(/from this distribution/)).toBeVisible({ timeout: 60_000 });
+  await quick(() => expect(waiting.getByText(/from this distribution/)).toBeVisible({ timeout: 60_000 }));
   await caption(page, "The recipient claims with their own wallet; a missing trustline is added in the same step.", 3500);
   await approveWalletFlow(context, page, () => waiting.getByRole("button", { name: /^Claim \d+$/ }).click());
   await expect(waiting.getByText("Claimed.")).toBeVisible({ timeout: 60_000 });
@@ -128,7 +144,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   await page.goto(`${baseURL}/batches/${expiring.batchId}`);
   await hideToasts(page);
   const expClaims = page.getByRole("region", { name: "Claim status" });
-  await expect(expClaims.getByText("Claim window closed")).toBeVisible({ timeout: 240_000 });
+  await quick(() => expect(expClaims.getByText("Claim window closed")).toBeVisible({ timeout: 240_000 }));
   await expClaims.scrollIntoViewIfNeeded();
   await caption(page, "4. When the claim window has closed, the sender takes back what was not claimed.", 3500);
   await expClaims.getByRole("button", { name: "Reclaim 3 unclaimed" }).click();
@@ -148,7 +164,26 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
   await hideToasts(page);
   await caption(page, "5. Mainnet batches are marked as real funds, and the wallet must be on the same network.", 4000);
   await page.goto(`${baseURL}/preview/mainnet-gate`);
+  await hideToasts(page);
   await caption(page, "Before a Mainnet approval, the sender types MAINNET to confirm.", 2000);
   await page.getByLabel("Type MAINNET to confirm").pressSequentially("MAINNET", { delay: 120 });
   await caption(page, "Sendall: one signature, parallel transactions, claimable balances, PDF receipts.", 4000);
+
+  // Timeline for compose.mjs: where each wallet popup goes on the app video
+  // and which waits to cut.
+  const at = (ms: number) => (ms - startedAt) / 1000;
+  writeFileSync(
+    path.resolve(process.env.DEMO_VIDEO_DIR!, "timeline.json"),
+    JSON.stringify(
+      {
+        main: await page.video()!.path(),
+        popups: await Promise.all(
+          demoPopups.map(async (p) => ({ video: await p.page.video()!.path(), start: at(p.openedAt), end: p.closedAt ? at(p.closedAt) : null }))
+        ),
+        skips,
+      },
+      null,
+      2
+    )
+  );
 });

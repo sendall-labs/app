@@ -8,6 +8,15 @@ const WALLET_PROFILE_DIR = path.resolve(__dirname, "../.wallet-profile");
 export const WALLET_PASSWORD = process.env.E2E_WALLET_PASSWORD ?? "TestPassword123!";
 export const WALLET_PUBLIC_KEY = process.env.E2E_WALLET_PUBLIC_KEY;
 
+// Demo recordings (playwright.demo.config.ts) set DEMO_VIDEO_DIR. The app
+// page is recorded at 16:9; each Freighter popup is recorded as its own
+// page at the real popup size, and its timing is kept here so the demo can
+// lay the popups over the app video afterwards (e2e/demo/compose.mjs).
+const DEMO = !!process.env.DEMO_VIDEO_DIR;
+export const DEMO_VIEWPORT = { width: 1536, height: 864 };
+export const DEMO_POPUP = { width: 360, height: 600 };
+export const demoPopups: { page: Page; openedAt: number; closedAt?: number }[] = [];
+
 if (!fs.existsSync(path.join(EXTENSION_PATH, "manifest.json"))) {
   throw new Error(
     "Freighter extension not found — run e2e/scripts/download-freighter.sh first (see e2e/README.md)."
@@ -51,6 +60,11 @@ export async function approveFreighterPopup(popup: Page): Promise<void> {
   if ((await approveBtn.count()) === 0) {
     throw new Error(`Freighter popup at ${popup.url()} had no recognized approve button (saw: ${JSON.stringify(buttonTexts)})`);
   }
+  if (DEMO) {
+    // Let the viewer read what is being approved.
+    await approveBtn.hover();
+    await popup.waitForTimeout(2200);
+  }
   await approveBtn.click();
 }
 
@@ -75,6 +89,12 @@ export async function approveWalletFlow(
   const onPage = (p: Page) => {
     if (seen.has(p)) return;
     seen.add(p);
+    if (DEMO) {
+      const entry: (typeof demoPopups)[number] = { page: p, openedAt: Date.now() };
+      demoPopups.push(entry);
+      p.on("close", () => (entry.closedAt = Date.now()));
+      void p.setViewportSize(DEMO_POPUP).catch(() => {});
+    }
     newPages.push(p);
   };
   context.on("page", onPage);
@@ -141,9 +161,8 @@ export const test = base.extend<WalletFixtures>({
       // Freighter's own fullscreen-mode page) inherit the actual OS window
       // size, which reflows Freighter's layout unpredictably. The window
       // itself is still maximized via --start-maximized below.
-      viewport: { width: 1280, height: 800 },
-      // Demo recordings (playwright.demo.config.ts) set DEMO_VIDEO_DIR.
-      ...(process.env.DEMO_VIDEO_DIR ? { recordVideo: { dir: process.env.DEMO_VIDEO_DIR, size: { width: 1280, height: 800 } } } : {}),
+      viewport: DEMO ? DEMO_VIEWPORT : { width: 1280, height: 800 },
+      ...(DEMO ? { recordVideo: { dir: process.env.DEMO_VIDEO_DIR!, size: DEMO_VIEWPORT } } : {}),
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
