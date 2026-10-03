@@ -58,6 +58,9 @@ async function quick<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+const batchIds: string[] = [];
+const batchIdFromUrl = (url: string) => new URL(url).pathname.match(/\/batches\/([^/]+)/)![1];
+
 const hideToasts = (page: Page) => page.addStyleTag({ content: "[data-sonner-toaster],nextjs-portal{display:none !important}" });
 
 test("Sendall phase 2 demo", async ({ context, baseURL }) => {
@@ -95,6 +98,9 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
     await caption(page, "Connect the sender's wallet (Freighter).", 1500);
     await approveWalletFlow(context, page, () => page.getByRole("button", { name: "Connect Wallet" }).last().click());
     await expect(page.getByRole("button", { name: /Disconnect/ }).last()).toBeVisible({ timeout: 30_000 });
+    const balances = page.locator("section").filter({ has: page.getByRole("heading", { name: "Balances" }) });
+    await expect(balances.getByText("XLM").first()).toBeVisible({ timeout: 30_000 });
+    await caption(page, "Signed in: the wallet's balances load right away.", 2500);
 
     // 1. Payments: 150 recipients, one signature, parallel transactions.
     await page.getByRole("complementary").getByRole("link", { name: "Bulk Payment" }).click();
@@ -117,6 +123,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
     const panel = page.getByRole("region", { name: "Distribution progress" });
     await caption(page, "Live: the authorization lands, then each transaction goes out from its own channel account.", 500);
     await expect(panel.getByText("Distribution complete")).toBeVisible({ timeout: 120_000 });
+    batchIds.push(`Bulk payment=${batchIdFromUrl(page.url())}`);
     await caption(page, "150 of 150 delivered. Every transaction links to the explorer.", 3500);
     await caption(page, "A PDF receipt is ready for the distribution.", 1000);
     const [receipt] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download receipt (PDF)" }).click()]);
@@ -140,6 +147,7 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
     await caption(page, "The review shows the claim deadline and the reserve the balances lock (1 XLM each).", 4000);
     await approveWalletFlow(context, page, () => review.getByRole("button", { name: "Approve in wallet" }).click());
     await expect(panel.getByText("Distribution complete")).toBeVisible({ timeout: 120_000 });
+    batchIds.push(`Bulk claimable balance=${batchIdFromUrl(page.url())}`);
     const claims = page.getByRole("region", { name: "Claim status" });
     await quick(() => expect(claims.getByText("Claimed 0 of 3")).toBeVisible({ timeout: 60_000 }));
     await claims.scrollIntoViewIfNeeded();
@@ -176,22 +184,14 @@ test("Sendall phase 2 demo", async ({ context, baseURL }) => {
     await expect(expClaims.getByText("Reclaimed").locator("..").getByText("3")).toBeVisible({ timeout: 120_000 });
     await caption(page, "Reclaimed 3, with their reserve.", 3000);
 
-    // 5. Mainnet safety.
-    const mainnet = await page.request.post(`${baseURL}/api/batches`, {
-      data: { csvText: `destination,amount,memo\n${Keypair.random().publicKey()},1\n`, network: "PUBLIC" },
-    });
-    const { batch: mainnetBatch } = await mainnet.json();
-    await page.goto(`${baseURL}/batches/${mainnetBatch.id}`);
-    await hideToasts(page);
-    await caption(page, "5. Mainnet batches are marked as real funds, and the wallet must be on the same network.", 4000);
-    await page.goto(`${baseURL}/preview/mainnet-gate`);
-    await hideToasts(page);
-    await caption(page, "Before a Mainnet approval, the sender types MAINNET to confirm.", 2000);
-    await page.getByLabel("Type MAINNET to confirm").pressSequentially("MAINNET", { delay: 120 });
     await caption(page, "Sendall: one signature, parallel transactions, claimable balances, PDF receipts.", 4000);
   } finally {
     await recording.stop();
   }
+
+  // Every account and transaction the demo used, for the record.
+  batchIds.push(`Claim page (sent to the demo wallet before the recording)=${forRecipient.batchId}`, `Reclaim (sent before the recording with a 4-minute claim window)=${expiring.batchId}`);
+  execFileSync("npx", ["tsx", path.resolve(__dirname, "../scripts/demo-report.ts"), path.join(dir, "demo-report.md"), ...batchIds], { stdio: "inherit" });
 
   // Timeline for compose.mjs: the window to crop to, the wallet popups not
   // to cut into, the waits to cut, and the cursor moves to zoom on.
