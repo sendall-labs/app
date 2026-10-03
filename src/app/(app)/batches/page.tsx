@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { KindBadge } from "@/components/batches/KindBadge";
 
 type BatchSummary = {
   id: string;
@@ -10,6 +11,8 @@ type BatchSummary = {
   assetCode: string | null;
   createdAt: string;
   csvFileName: string | null;
+  kind: "PAYMENT" | "CLAIMABLE_BALANCE";
+  claims: { created: number; claimed: number; reclaimed: number } | null;
   _count: { recipients: number };
 };
 
@@ -131,6 +134,7 @@ export default function BatchesPage() {
             <thead>
               <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-faint">
                 <th className="px-5 py-3 font-medium">File</th>
+                <th className="px-5 py-3 font-medium">Type</th>
                 <th className="px-5 py-3 font-medium">Recipients</th>
                 <th className="px-5 py-3 font-medium">Asset</th>
                 <th className="px-5 py-3 font-medium">Network</th>
@@ -145,8 +149,16 @@ export default function BatchesPage() {
                       {b.csvFileName ?? b.id}
                     </Link>
                   </td>
+                  <td className="px-5 py-3 transition-colors group-hover:bg-sidebar/60">
+                    <KindBadge kind={b.kind} />
+                  </td>
                   <td className="px-5 py-3 tabular-nums text-ink-muted transition-colors group-hover:bg-sidebar/60">
                     {b._count.recipients}
+                    {b.claims && b.claims.created > 0 && (
+                      <span className="ml-2 text-xs text-ink-faint" title={`${b.claims.reclaimed} reclaimed`}>
+                        claimed {b.claims.claimed} / {b.claims.created}
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-3 text-ink-muted transition-colors group-hover:bg-sidebar/60">
                     {b.assetCode ?? "XLM"}

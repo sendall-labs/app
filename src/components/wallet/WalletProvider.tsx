@@ -8,6 +8,10 @@ type WalletContextValue = {
   network: Network;
   setNetwork: (network: Network) => void;
   address: string | null;
+  // True once the server session belongs to `address`. `address` is set as
+  // soon as the wallet answers, before the sign-in finishes, so anything that
+  // calls a session-gated API must wait for this instead.
+  authenticated: boolean;
   connecting: boolean;
   connect: () => Promise<string>;
   // Full SIWS handshake (connect + challenge + sign + verify) — the only
@@ -15,7 +19,10 @@ type WalletContextValue = {
   // alone just reads the wallet's address and does not authenticate.
   login: () => Promise<string>;
   disconnect: () => Promise<void>;
-  signTransaction: (xdr: string) => Promise<string>;
+  // Signs for `network` when given (the batch's), else the app default.
+  signTransaction: (xdr: string, network?: Network) => Promise<string>;
+  // The passphrase the wallet itself is on, or null if it cannot say.
+  walletNetworkPassphrase: () => Promise<string | null>;
   signMessage: (message: string) => Promise<string>;
 };
 
@@ -27,6 +34,7 @@ const DEFAULT_NETWORK: Network =
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [network, setNetwork] = useState<Network>(DEFAULT_NETWORK);
   const [address, setAddress] = useState<string | null>(null);
+  const [sessionKey, setSessionKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   // Mirrors `address`, but updated synchronously — signTransaction/signMessage
   // read this instead of the `address` state so a signMessage call made right
@@ -47,7 +55,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     fetch("/api/auth/session")
       .then((res) => res.json())
       .then((data) => {
-        if (data.publicKey) updateAddress(data.publicKey);
+        if (!data.publicKey) return;
+        updateAddress(data.publicKey);
+        setSessionKey(data.publicKey);
       })
       .catch(() => {});
   }, [updateAddress]);
@@ -74,6 +84,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [updateAddress]);
 
+  // A signed message is only proof that the wallet holds the key; the
+  // server verifies it the same way on every network. So sign it on
+  // whatever network the wallet is on: asking for another one makes
+  // Freighter refuse ("Freighter is set to Main Net").
+  const messagePassphrase = useCallback(async () => {
+    try {
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      if (networkPassphrase) return networkPassphrase;
+    } catch {
+      // not every wallet reports its network
+    }
+    return networkToKitNetwork(network);
+  }, [network]);
+
   const login = useCallback(async () => {
     const publicKey = await connect();
 
@@ -87,7 +111,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const { signedMessage } = await StellarWalletsKit.signMessage(message, {
       address: publicKey,
-      networkPassphrase: networkToKitNetwork(network),
+      networkPassphrase: await messagePassphrase(),
     });
 
     const verifyRes = await fetch("/api/auth/verify", {
@@ -101,26 +125,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     const { publicKey: verifiedKey } = await verifyRes.json();
     updateAddress(verifiedKey);
+    setSessionKey(verifiedKey);
     return verifiedKey;
-  }, [connect, network, updateAddress]);
+  }, [connect, messagePassphrase, updateAddress]);
 
   const disconnect = useCallback(async () => {
     await StellarWalletsKit.disconnect();
     updateAddress(null);
+    setSessionKey(null);
   }, [updateAddress]);
 
   const signTransaction = useCallback(
-    async (xdr: string) => {
+    async (xdr: string, forNetwork?: Network) => {
       const currentAddress = addressRef.current;
       if (!currentAddress) throw new Error("No wallet connected");
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         address: currentAddress,
-        networkPassphrase: networkToKitNetwork(network),
+        networkPassphrase: networkToKitNetwork(forNetwork ?? network),
       });
       return signedTxXdr;
     },
     [network]
   );
+
+  const walletNetworkPassphrase = useCallback(async () => {
+    try {
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      return networkPassphrase || null;
+    } catch {
+      return null; // not every wallet reports its network
+    }
+  }, []);
 
   const signMessage = useCallback(
     async (message: string) => {
@@ -128,11 +163,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (!currentAddress) throw new Error("No wallet connected");
       const { signedMessage } = await StellarWalletsKit.signMessage(message, {
         address: currentAddress,
-        networkPassphrase: networkToKitNetwork(network),
+        networkPassphrase: await messagePassphrase(),
       });
       return signedMessage;
     },
-    [network]
+    [messagePassphrase]
   );
 
   const value = useMemo(
@@ -140,14 +175,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       network,
       setNetwork,
       address,
+      authenticated: !!address && address === sessionKey,
       connecting,
       connect,
       login,
       disconnect,
       signTransaction,
+      walletNetworkPassphrase,
       signMessage,
     }),
-    [network, address, connecting, connect, login, disconnect, signTransaction, signMessage]
+    [network, address, sessionKey, connecting, connect, login, disconnect, signTransaction, walletNetworkPassphrase, signMessage]
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

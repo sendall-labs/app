@@ -1,11 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { RecipientsEditor } from "@/components/batches/RecipientsEditor";
 import { BatchStageNav, STAGES, stageFromStatus, type Stage } from "@/components/batches/BatchStageNav";
+import { AssetField, NetworkField } from "@/components/batches/AssetFields";
+import { explorerAccountUrl, explorerTxUrl } from "@/lib/stellar/explorer";
+import { formatAmount, sumAmounts } from "@/lib/format";
+import { useDistributionRun, type RunPhase } from "@/components/distribution/useDistributionRun";
+import { DistributionProgress } from "@/components/distribution/DistributionProgress";
+import { KindBadge } from "@/components/batches/KindBadge";
+import { KindSwitch } from "@/components/batches/KindSwitch";
+import { ClaimWindowPicker } from "@/components/batches/ClaimWindowPicker";
+import { ClaimPill, ClaimStatusCard, type ClaimSummaryView } from "@/components/distribution/ClaimStatusCard";
+import { isConvertible } from "@/lib/distribution/convertRules";
+import { PreflightProblems, SendReviewCard } from "@/components/distribution/SendReviewCard";
+
+// "channels" (default): one wallet signature, chunks sent in parallel by
+// the channel engine. "legacy": the Phase 1 sequential sender, kept as
+// the benchmark baseline and a fallback.
+const SEND_ENGINE = process.env.NEXT_PUBLIC_SEND_ENGINE === "legacy" ? "legacy" : "channels";
+
+const PHASE_LABEL: Partial<Record<RunPhase, string>> = {
+  preparing: "Checking…",
+  review: "Review below",
+  "awaiting-signature": "Approve in your wallet…",
+  authorizing: "Authorizing…",
+  running: "Sending…",
+};
 
 type Recipient = {
   id: string;
@@ -20,7 +44,13 @@ type Recipient = {
   hasTrustline: boolean | null;
   status: string;
   errorMessage: string | null;
+  claimStatus?: "UNCLAIMED" | "CLAIMED" | "RECLAIMED" | null;
+  claimTxHash?: string | null;
+  claimableBalanceId?: string | null;
+  channelItems?: { status: string; resultCode: string | null; transaction: { stellarTxHash: string | null; transactionHash: string } }[];
 };
+
+type RunSummary = { id: string; status: string; purpose: string; errorCode: string | null; signedAt: string | null; createdAt: string };
 
 type AttemptItem = { recipientId: string; status: string };
 type Attempt = { txHash: string | null; items: AttemptItem[] };
@@ -36,6 +66,10 @@ type Batch = {
   createdAt: string;
   recipients: Recipient[];
   attempts: Attempt[];
+  runs?: RunSummary[];
+  kind?: "PAYMENT" | "CLAIMABLE_BALANCE";
+  claimExpiresAt?: string | null;
+  claimWindowDays?: number | null;
 };
 
 type EditableRow = {
@@ -84,16 +118,6 @@ function statusPillClass(status: string): string {
   return STATUS_PILL[status] ?? "bg-warning-soft text-warning";
 }
 
-function explorerTxUrl(network: string, txHash: string): string {
-  const segment = network === "PUBLIC" ? "public" : "testnet";
-  return `https://stellar.expert/explorer/${segment}/tx/${txHash}`;
-}
-
-function explorerAccountUrl(network: string, address: string): string {
-  const segment = network === "PUBLIC" ? "public" : "testnet";
-  return `https://stellar.expert/explorer/${segment}/account/${address}`;
-}
-
 function recipientToRow(r: Recipient): EditableRow {
   return { id: r.id, destination: r.destination, amount: r.amount, memo: r.memo };
 }
@@ -129,13 +153,6 @@ function textToRows(text: string, prevRows: EditableRow[]): EditableRow[] {
   });
 }
 
-function sumAmounts(rows: EditableRow[]): number {
-  return rows.reduce((sum, r) => {
-    const n = Number(r.amount);
-    return sum + (Number.isFinite(n) ? n : 0);
-  }, 0);
-}
-
 // A batch created via "New batch" has no csvFileName (nothing was ever
 // uploaded) — falling back to the raw cuid there read as an internal
 // implementation detail leaking into the UI, so this is what shows
@@ -143,81 +160,6 @@ function sumAmounts(rows: EditableRow[]): number {
 function formatCreatedAt(iso: string): string {
   const d = new Date(iso);
   return `Created ${d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
-}
-
-// Fixed to en-US regardless of the viewer's locale — every amount
-// elsewhere in this app (the textarea, the recipient inputs, the raw CSV
-// format) is period-decimal, so a locale like tr-TR rendering this as
-// "23,7" would silently disagree with everything else on the page.
-function formatAmount(n: number): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits: 7 });
-}
-
-type KnownAsset = {
-  code: string;
-  domain: string;
-  accentClass: string;
-  // Real brand icon, downloaded from Stellar Lab / stellar.expert and
-  // served locally (public/assets/tokens) instead of hotlinked — no
-  // external request at render time, nothing to break if a third-party
-  // CDN changes. null falls back to the monogram badge below.
-  icon: string | null;
-  // null = native XLM, no issuer needed. Otherwise the verified issuer per
-  // network — an asset not listed for a given network (AQUA has no
-  // testnet entry below) is filtered out of the picker while that
-  // network's selected, rather than showing an issuer that doesn't exist.
-  issuer: Partial<Record<"TESTNET" | "PUBLIC", string>> | null;
-};
-
-// Every issuer here is verified against an official source — never invent
-// one from memory, a wrong address silently misdirects funds:
-// - USDC/EURC: developers.circle.com/stablecoins/{usdc,eurc}-contract-addresses
-// - AQUA: aqua.network/.well-known/stellar.toml (mainnet only; Aquarius
-//   doesn't run a testnet issuer)
-const KNOWN_ASSETS: KnownAsset[] = [
-  {
-    code: "XLM",
-    domain: "Stellar Network",
-    accentClass: "bg-ink text-paper",
-    icon: "/assets/tokens/xlm.png",
-    issuer: null,
-  },
-  {
-    code: "USDC",
-    domain: "circle.com",
-    accentClass: "bg-[#2775CA] text-white",
-    icon: "/assets/tokens/usdc.png",
-    issuer: {
-      PUBLIC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-      TESTNET: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-    },
-  },
-  {
-    code: "EURC",
-    domain: "circle.com",
-    accentClass: "bg-[#2775CA] text-white",
-    icon: "/assets/tokens/eurc.png",
-    issuer: {
-      PUBLIC: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
-      TESTNET: "GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO",
-    },
-  },
-  {
-    code: "AQUA",
-    domain: "aqua.network",
-    accentClass: "bg-[#8B5CF6] text-white",
-    icon: "/assets/tokens/aqua.png",
-    issuer: { PUBLIC: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA" },
-  },
-];
-
-function findKnownAsset(code: string): KnownAsset | undefined {
-  const upper = code.trim().toUpperCase();
-  return KNOWN_ASSETS.find((a) => a.code === upper);
-}
-
-function issuerForNetwork(asset: KnownAsset, network: string): string | undefined {
-  return asset.issuer?.[network as "TESTNET" | "PUBLIC"];
 }
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
@@ -256,7 +198,8 @@ function ExternalLinkIcon() {
 export default function BatchReviewPage() {
   const { batchId } = useParams<{ batchId: string }>();
   const isDemo = useSearchParams().get("demo") === "1";
-  const { login, signTransaction } = useWallet();
+  const router = useRouter();
+  const { login, signTransaction, walletNetworkPassphrase } = useWallet();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
   const [busyRowIds, setBusyRowIds] = useState<Set<string>>(new Set());
@@ -329,7 +272,7 @@ export default function BatchReviewPage() {
     return () => clearInterval(interval);
   }, [batch, load]);
 
-  const canEdit = batch ? batch.attempts.length === 0 : false;
+  const canEdit = batch ? batch.attempts.length === 0 && !(batch.runs ?? []).some((r) => r.signedAt) : false;
   const anyBusy = bulkBusy !== null || busyRowIds.size > 0;
 
   const runChecks = useCallback(
@@ -597,7 +540,140 @@ export default function BatchReviewPage() {
     if (!res.ok) throw new Error((await res.json()).error ?? "Couldn't claim this batch");
   }, [batchId, login]);
 
+  const switchKind = useCallback(
+    async (next: "PAYMENT" | "CLAIMABLE_BALANCE") => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: next }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not change the type");
+        await load();
+        setPinnedStage("prepare");
+        toast.success(next === "CLAIMABLE_BALANCE" ? "Sending as claimable balances" : "Sending as payments");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not change the type");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId, load]
+  );
+
+  const setClaimWindow = useCallback(
+    async (days: number) => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/batches/${batchId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ claimWindowDays: days }),
+        });
+        if (!res.ok) throw new Error((await res.json()).error ?? "Could not change the claim window");
+        await load();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not change the claim window");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [batchId, load]
+  );
+
+  // Can Sendall send on this batch's network right now (e.g. Mainnet set up)?
+  const [service, setService] = useState<{ network: string; ready: boolean } | null>(null);
+  const statusNetwork = batch?.network;
+  useEffect(() => {
+    if (!statusNetwork) return;
+    let cancelled = false;
+    fetch(`/api/service/status?network=${statusNetwork}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setService({ network: data.network, ready: data.ready });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [statusNetwork]);
+  const serviceUnavailable = SEND_ENGINE === "channels" && service?.network === batch?.network && service?.ready === false;
+
+  const [claims, setClaims] = useState<ClaimSummaryView | null>(null);
+  const [syncingClaims, setSyncingClaims] = useState(false);
+  const syncClaims = useCallback(async () => {
+    setSyncingClaims(true);
+    try {
+      const res = await fetch(`/api/batches/${batchId}/claims/sync`, { method: "POST" });
+      if (!res.ok) return;
+      setClaims((await res.json()).claims);
+      await load();
+    } finally {
+      setSyncingClaims(false);
+    }
+  }, [batchId, load]);
+  const hasBalances = !!batch?.recipients.some((r) => r.claimableBalanceId);
+  const claimsSyncedRef = useRef(false);
+  useEffect(() => {
+    // Once per visit: read claim progress from the network.
+    if (!hasBalances || claimsSyncedRef.current) return;
+    claimsSyncedRef.current = true;
+    const timer = setTimeout(() => void syncClaims(), 0);
+    return () => clearTimeout(timer);
+  }, [hasBalances, syncClaims]);
+
+  const convertFailed = useCallback(async () => {
+    setBulkBusy("convert");
+    try {
+      await ensureClaimed();
+      const res = await fetch(`/api/batches/${batchId}/convert-failed`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not create the claimable balance batch");
+      toast.success(`${data.moved} row${data.moved === 1 ? "" : "s"} moved to a new claimable balance batch`);
+      router.push(`/batches/${data.batchId}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create the claimable balance batch");
+    } finally {
+      setBulkBusy(null);
+    }
+  }, [batchId, ensureClaimed, router]);
+
+  const batchNetwork = (batch?.network ?? "TESTNET") as "TESTNET" | "PUBLIC";
+  const distribution = useDistributionRun({
+    network: batchNetwork,
+    signTransaction,
+    walletNetworkPassphrase,
+    ensureClaimed,
+    onFinished: (run) => {
+      void load().then(() => setPinnedStage(null));
+      if (run.purpose === "RECLAIM") void syncClaims();
+      if (run.status === "COMPLETED")
+        toast.success(run.purpose === "CLEANUP" ? "Leftover signers removed" : run.purpose === "RECLAIM" ? "Unclaimed balances are back in your account" : "Distribution complete");
+      else if (run.status === "PARTIALLY_FAILED") toast.warning("Some rows were not delivered. You can send them again.");
+      else toast.error(run.errorMessage ?? "The distribution did not go through.");
+    },
+    // A failed start (e.g. preflight problems): reload so the rows it
+    // flagged show their reason; the problems card lists them too.
+    onError: () => {
+      void load();
+    },
+  });
+  const distributionActive = ["preparing", "review", "awaiting-signature", "authorizing", "running"].includes(distribution.phase);
+
+  // Re-attach to a run that is still in flight when the page opens.
+  const { watch: watchRun, phase: distributionPhase } = distribution;
+  const cleanupRunId = batch?.runs?.find((r) => r.errorCode === "CLEANUP_REQUIRED")?.id;
+  const inFlightRunId = batch?.runs?.find((r) => r.signedAt && ["SETUP_SUBMITTED", "SETUP_CONFIRMED", "PAYMENTS_SUBMITTING"].includes(r.status))?.id;
+  useEffect(() => {
+    if (inFlightRunId && distributionPhase === "idle") watchRun(inFlightRunId);
+  }, [inFlightRunId, distributionPhase, watchRun]);
+
   const prepareAndSend = useCallback(async () => {
+    if (SEND_ENGINE === "channels") {
+      await distribution.prepare(batchId);
+      return;
+    }
     setBulkBusy("send");
     try {
       await ensureClaimed();
@@ -609,7 +685,7 @@ export default function BatchReviewPage() {
         // A payment chunk authorized via the master tx's preAuthTx
         // signers (see txBuilder.ts) needs no wallet signature — submit
         // it exactly as built.
-        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr, batchNetwork) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -626,9 +702,14 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed]);
+  }, [batchId, load, signTransaction, ensureClaimed, distribution, batchNetwork]);
 
   const retryFailed = useCallback(async () => {
+    const lastRun = batch?.runs?.find((r) => r.purpose === "SEND" || r.purpose === "REAUTHORIZE");
+    if (SEND_ENGINE === "channels" && lastRun) {
+      await distribution.reauthorize(lastRun.id);
+      return;
+    }
     setBulkBusy("retry");
     try {
       await ensureClaimed();
@@ -640,7 +721,7 @@ export default function BatchReviewPage() {
         // A payment chunk authorized via the master tx's preAuthTx
         // signers (see txBuilder.ts) needs no wallet signature — submit
         // it exactly as built.
-        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr) : attempt.xdr;
+        const signedXdr = attempt.requiresSignature ? await signTransaction(attempt.xdr, batchNetwork) : attempt.xdr;
         const submitRes = await fetch(`/api/batches/${batchId}/submit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -657,7 +738,7 @@ export default function BatchReviewPage() {
     } finally {
       setBulkBusy(null);
     }
-  }, [batchId, load, signTransaction, ensureClaimed]);
+  }, [batchId, load, signTransaction, ensureClaimed, batch, distribution, batchNetwork]);
 
   const refreshableCount = useMemo(() => {
     if (!batch) return 0;
@@ -713,6 +794,17 @@ export default function BatchReviewPage() {
       if (item.status === "SUCCESS") txHashByRecipient.set(item.recipientId, attempt.txHash);
     }
   }
+  for (const r of batch.recipients) {
+    const tx = r.channelItems?.find((i) => i.status === "SUCCESS")?.transaction;
+    if (tx) txHashByRecipient.set(r.id, tx.stellarTxHash ?? tx.transactionHash);
+  }
+  const kind = batch.kind ?? "PAYMENT";
+  const convertibleCount =
+    kind === "PAYMENT"
+      ? batch.recipients.filter((r) =>
+          isConvertible({ ...r, lastResultCode: r.channelItems?.[0]?.resultCode ?? null }, !batch.assetCode)
+        ).length
+      : 0;
 
   const savedRows = batch.recipients.map(recipientToRow);
   const prepareDisplayText = prepareText ?? rowsToText(savedRows);
@@ -775,12 +867,36 @@ export default function BatchReviewPage() {
       <BatchStageNav current={displayedStage} onSelect={setPinnedStage} />
 
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Batch review</h1>
+        <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight text-ink">
+          {batch.kind === "CLAIMABLE_BALANCE" ? "Bulk claimable balance" : "Bulk payment"}
+          <KindBadge kind={batch.kind ?? "PAYMENT"} />
+          {batch.network === "PUBLIC" && (
+            <span className="rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">Mainnet · real funds</span>
+          )}
+        </h1>
         <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
           {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
           {saving && <span className="text-xs text-ink-faint">Saving…</span>}
         </p>
+        <div className="mt-4">
+          <KindSwitch value={kind} disabled={!canEdit || saving || anyBusy || distributionActive} onChange={(next) => void switchKind(next)} />
+        </div>
+        {kind === "CLAIMABLE_BALANCE" && (
+          <div className="mt-4">
+            <ClaimWindowPicker
+              value={batch.claimWindowDays ?? 30}
+              disabled={!canEdit || saving || distributionActive}
+              onChange={(days) => void setClaimWindow(days)}
+            />
+          </div>
+        )}
       </div>
+
+      {serviceUnavailable && (
+        <div role="status" className="rounded-2xl border border-warning/30 bg-warning-soft px-5 py-3 text-sm text-warning">
+          Sending on {batch.network === "PUBLIC" ? "Mainnet" : "Testnet"} is not available yet. You can prepare and check this list now and send it once it is.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {canEdit ? (
@@ -830,6 +946,55 @@ export default function BatchReviewPage() {
         />
       )}
 
+      {distribution.phase === "error" && distribution.error && (
+        <PreflightProblems
+          error={distribution.error}
+          rowNumberOf={(id) => {
+            // The table numbers rows by position, not by their CSV line.
+            const i = batch.recipients.findIndex((x) => x.id === id);
+            return i >= 0 ? i + 1 : undefined;
+          }}
+          onDismiss={distribution.reset}
+        />
+      )}
+
+      {distribution.phase === "review" && distribution.review && (
+        <SendReviewCard
+          review={distribution.review}
+          network={batchNetwork}
+          error={distribution.error}
+          busy={false}
+          onApprove={distribution.approve}
+          onCancel={() => void distribution.cancel().then(load)}
+        />
+      )}
+
+      {["preparing", "awaiting-signature", "authorizing", "running", "done"].includes(distribution.phase) && (
+        <DistributionProgress
+          phase={distribution.phase}
+          run={distribution.run}
+          transactionCount={distribution.transactionCount}
+          onDismiss={distribution.reset}
+          onSendFailedAgain={distribution.run ? () => void distribution.reauthorize(distribution.run!.id) : undefined}
+          onCleanup={distribution.run ? () => void distribution.cleanup(distribution.run!.id) : undefined}
+        />
+      )}
+
+      {distribution.phase === "idle" && cleanupRunId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning-soft px-5 py-3">
+          <p className="text-sm text-warning">
+            A past distribution left temporary signers on your account. They cannot move funds on their own, but they hold signer slots.
+          </p>
+          <button
+            type="button"
+            onClick={() => void distribution.cleanup(cleanupRunId)}
+            className="cursor-pointer rounded-full border border-hairline bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-paper"
+          >
+            Remove leftover signers
+          </button>
+        </div>
+      )}
+
       {displayedStage === "confirm" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -854,10 +1019,20 @@ export default function BatchReviewPage() {
               <span />
             )}
             <div className="flex flex-wrap justify-end gap-2">
+              {convertibleCount > 0 && (
+                <button
+                  onClick={convertFailed}
+                  disabled={anyBusy || distributionActive}
+                  className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                  title="These recipients have no trustline or account yet. A claimable balance lets them claim once they do."
+                >
+                  {bulkBusy === "convert" ? "Creating…" : `Send ${convertibleCount} as claimable balance`}
+                </button>
+              )}
               {refreshableCount > 0 && (
                 <button
                   onClick={refreshAll}
-                  disabled={anyBusy}
+                  disabled={anyBusy || distributionActive}
                   className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {bulkBusy === "refresh-all" ? "Refreshing…" : `Refresh all (${refreshableCount})`}
@@ -867,12 +1042,12 @@ export default function BatchReviewPage() {
                 <button
                   ref={signSendBtnRef}
                   onClick={prepareAndSend}
-                  disabled={anyBusy}
+                  disabled={anyBusy || distributionActive || serviceUnavailable}
                   className={`accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 ${
                     demoHighlightSignSend ? "outline-2 outline-offset-2 outline-accent animate-pulse" : ""
                   }`}
                 >
-                  {bulkBusy === "send" ? "Sending…" : `Sign & send (${readyCount})`}
+                  {bulkBusy === "send" ? "Sending…" : (PHASE_LABEL[distribution.phase] ?? `Sign & send (${readyCount})`)}
                 </button>
               )}
             </div>
@@ -899,16 +1074,65 @@ export default function BatchReviewPage() {
         </div>
       )}
 
+      {displayedStage === "send" && claims && claims.created > 0 && (
+        <ClaimStatusCard
+          summary={claims}
+          syncing={syncingClaims}
+          onRefresh={() => void syncClaims()}
+          action={
+            <button
+              type="button"
+              onClick={() => {
+                const link = `${window.location.origin}/claim?batch=${batchId}`;
+                void navigator.clipboard.writeText(link).then(() => toast.success("Claim link copied"));
+              }}
+              className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+            >
+              Copy claim link
+            </button>
+          }
+          reclaimAction={
+            <button
+              type="button"
+              onClick={() => void distribution.reclaim(batchId)}
+              disabled={distributionActive}
+              className="accent-gradient cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Reclaim {claims.unclaimed} unclaimed
+            </button>
+          }
+        />
+      )}
+
       {displayedStage === "send" && (
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap justify-end gap-2">
+            {(batch.status === "COMPLETED" || batch.status === "PARTIAL_FAILURE") && (
+              <a
+                href={`/api/batches/${batchId}/receipt`}
+                download
+                className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar"
+              >
+                Download receipt (PDF)
+              </a>
+            )}
+            {convertibleCount > 0 && (
+              <button
+                onClick={convertFailed}
+                disabled={anyBusy || distributionActive}
+                className="cursor-pointer rounded-full border border-hairline px-4 py-2 text-sm font-medium text-ink hover:bg-sidebar disabled:cursor-not-allowed disabled:opacity-50"
+                title="These recipients have no trustline or account yet. A claimable balance lets them claim once they do."
+              >
+                {bulkBusy === "convert" ? "Creating…" : `Send ${convertibleCount} as claimable balance`}
+              </button>
+            )}
             {failedCount > 0 && (
               <button
                 onClick={retryFailed}
-                disabled={anyBusy}
+                disabled={anyBusy || distributionActive}
                 className="cursor-pointer rounded-full border border-danger/30 px-4 py-2 text-sm font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {bulkBusy === "retry" ? "Retrying…" : `Retry failed (${failedCount})`}
+                {bulkBusy === "retry" ? "Retrying…" : (PHASE_LABEL[distribution.phase] ?? `Send failed rows again (${failedCount})`)}
               </button>
             )}
           </div>
@@ -957,279 +1181,6 @@ function InfoField({ label, value }: { label: string; value: React.ReactNode }) 
     <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
       <p className="text-xs uppercase tracking-wide text-ink-faint">{label}</p>
       <div className="mt-1.5 text-sm font-medium text-ink">{value}</div>
-    </div>
-  );
-}
-
-const cardFieldClass =
-  "w-full rounded-xl border border-hairline bg-paper px-2 py-1 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
-
-function NetworkField({
-  network,
-  assetCode,
-  assetIssuer,
-  patchNetworkAsset,
-}: {
-  network: string;
-  assetCode: string | null;
-  assetIssuer: string | null;
-  patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
-}) {
-  return (
-    <div className="flex flex-col justify-center rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
-      <label className="text-xs uppercase tracking-wide text-ink-faint">Network</label>
-      <select
-        value={network}
-        onChange={(e) => {
-          const nextNetwork = e.target.value;
-          // A known asset's issuer differs by network — re-resolve it for
-          // whichever network is being switched to instead of carrying the
-          // old (now wrong) one over. A custom/unrecognized issuer is left
-          // exactly as the user entered it.
-          const known = assetCode ? findKnownAsset(assetCode) : undefined;
-          const nextIssuer = known ? (issuerForNetwork(known, nextNetwork) ?? "") : (assetIssuer ?? "");
-          patchNetworkAsset({ network: nextNetwork, assetCode: assetCode ?? "", assetIssuer: nextIssuer });
-        }}
-        className={`${cardFieldClass} mt-1.5`}
-      >
-        <option value="TESTNET">Testnet</option>
-        <option value="PUBLIC">Public (Mainnet)</option>
-      </select>
-    </div>
-  );
-}
-
-function AssetIcon({ code, accentClass, icon }: { code: string; accentClass: string; icon?: string | null }) {
-  if (icon) {
-    // Small fixed local file (public/assets/tokens) — not worth next/image's pipeline.
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={icon} alt={code} className="h-8 w-8 shrink-0 rounded-full" />;
-  }
-  return (
-    <span
-      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${accentClass}`}
-    >
-      {code.slice(0, 1)}
-    </span>
-  );
-}
-
-function AssetField({
-  network,
-  assetCode,
-  assetIssuer,
-  patchNetworkAsset,
-}: {
-  network: string;
-  assetCode: string | null;
-  assetIssuer: string | null;
-  patchNetworkAsset: (next: { network: string; assetCode: string; assetIssuer: string }) => void;
-}) {
-  // Blank defaults to native XLM — shown as "XLM" outright rather than an
-  // empty box the user has to already know means the same thing.
-  const currentCode = assetCode ?? "XLM";
-  const known = findKnownAsset(currentCode);
-  const [mode, setMode] = useState<"search" | "custom">(currentCode !== "XLM" && !known ? "custom" : "search");
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [resolvedIcon, setResolvedIcon] = useState<{ code: string; issuer: string; image: string | null; name: string | null } | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  // Custom assets don't ship a local icon — look one up the way a wallet
-  // actually should (SEP-1: home_domain -> stellar.toml -> CURRENCIES
-  // .image) instead of showing a bare monogram forever.
-  useEffect(() => {
-    if (known || !assetCode || !assetIssuer || !/^G[A-Z2-7]{55}$/.test(assetIssuer)) return;
-    let cancelled = false;
-    const code = assetCode;
-    const issuer = assetIssuer;
-    fetch(`/api/assets/icon?network=${network}&code=${encodeURIComponent(code)}&issuer=${issuer}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data) setResolvedIcon({ code, issuer, ...data });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [known, assetCode, assetIssuer, network]);
-
-  const customIcon =
-    resolvedIcon && resolvedIcon.code === assetCode && resolvedIcon.issuer === assetIssuer ? resolvedIcon : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const visibleAssets = KNOWN_ASSETS.filter((a) => a.issuer === null || issuerForNetwork(a, network));
-  const filtered = visibleAssets.filter((a) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return a.code.toLowerCase().includes(q) || a.domain.toLowerCase().includes(q);
-  });
-
-  const selectAsset = (asset: KnownAsset) => {
-    patchNetworkAsset({
-      network,
-      assetCode: asset.code === "XLM" ? "" : asset.code,
-      assetIssuer: issuerForNetwork(asset, network) ?? "",
-    });
-    setOpen(false);
-    setQuery("");
-  };
-
-  if (mode === "custom") {
-    return (
-      <div className="rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
-        <div className="flex items-center justify-between">
-          <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
-          <button
-            type="button"
-            onClick={() => setMode("search")}
-            className="cursor-pointer text-xs font-medium text-accent hover:underline"
-          >
-            Browse known assets
-          </button>
-        </div>
-        {assetCode && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-ink-faint">
-            <AssetIcon code={assetCode} accentClass="bg-sidebar text-ink-muted" icon={customIcon?.image} />
-            {customIcon?.name ?? "Looked up automatically from the issuer's stellar.toml"}
-          </div>
-        )}
-        <div key={`${assetCode}-${assetIssuer}`} className="mt-2 flex flex-col gap-1.5">
-          <input
-            defaultValue={currentCode === "XLM" ? "" : currentCode}
-            onBlur={(e) => {
-              const code = e.target.value.trim().toUpperCase();
-              if (!code || code === "XLM") {
-                if (assetCode) patchNetworkAsset({ network, assetCode: "", assetIssuer: "" });
-                setMode("search");
-                return;
-              }
-              const match = findKnownAsset(code);
-              if (match?.issuer) {
-                patchNetworkAsset({ network, assetCode: code, assetIssuer: issuerForNetwork(match, network) ?? "" });
-                setMode("search");
-              } else if (code !== currentCode) {
-                patchNetworkAsset({ network, assetCode: code, assetIssuer: "" });
-              }
-            }}
-            placeholder="Asset code"
-            className={cardFieldClass}
-          />
-          <input
-            defaultValue={assetIssuer ?? ""}
-            onBlur={(e) => {
-              const issuer = e.target.value.trim();
-              if (issuer !== (assetIssuer ?? "")) {
-                patchNetworkAsset({ network, assetCode: currentCode, assetIssuer: issuer });
-              }
-            }}
-            placeholder="Issuer G..."
-            className={`${cardFieldClass} font-mono text-xs`}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={rootRef} className="relative rounded-2xl border border-hairline bg-surface shadow-sm px-5 py-4">
-      <label className="text-xs uppercase tracking-wide text-ink-faint">Asset</label>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="mt-2 flex w-full cursor-pointer items-center gap-3 rounded-xl border border-hairline bg-paper px-3 py-2 text-left hover:border-accent"
-      >
-        <AssetIcon
-          code={currentCode}
-          accentClass={known?.accentClass ?? "bg-sidebar text-ink-muted"}
-          icon={known?.icon}
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-ink">{currentCode}</span>
-          <span className="block truncate text-xs text-ink-faint">{known?.domain ?? "Custom asset"}</span>
-        </span>
-        <svg
-          viewBox="0 0 20 20"
-          className={`h-4 w-4 shrink-0 text-ink-faint transition-transform ${open ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-        >
-          <path d="M5 7.5 10 12.5 15 7.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-xl border border-hairline bg-surface shadow-lg">
-          <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
-            <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <circle cx="9" cy="9" r="6" />
-              <path d="m17 17-4-4" strokeLinecap="round" />
-            </svg>
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Type asset name or code"
-              className="flex-1 bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="cursor-pointer text-ink-faint hover:text-ink"
-              >
-                ×
-              </button>
-            )}
-          </div>
-          <p className="px-3 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">Known assets</p>
-          <div className="max-h-64 overflow-y-auto py-1">
-            {filtered.map((a) => (
-              <button
-                key={a.code}
-                type="button"
-                onClick={() => selectAsset(a)}
-                className="flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-sidebar"
-              >
-                <AssetIcon code={a.code} accentClass={a.accentClass} icon={a.icon} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-ink">{a.code}</span>
-                  <span className="block truncate text-xs text-ink-faint">{a.domain}</span>
-                </span>
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <p className="px-3 py-4 text-center text-xs text-ink-faint">No known assets match &ldquo;{query}&rdquo;.</p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              setMode("custom");
-            }}
-            className="block w-full cursor-pointer border-t border-hairline px-3 py-2 text-left text-xs font-medium text-accent hover:underline"
-          >
-            + Enter a custom asset
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1516,6 +1467,11 @@ function RecipientsTable({
                     >
                       view tx ↗
                     </a>
+                  )}
+                  {r.claimStatus && (
+                    <span className="ml-2 inline-block align-middle">
+                      <ClaimPill status={r.claimStatus} href={r.claimTxHash ? explorerTxUrl(batch.network, r.claimTxHash) : null} />
+                    </span>
                   )}
                 </td>
                 <td className="px-3 py-3">

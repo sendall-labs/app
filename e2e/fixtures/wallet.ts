@@ -8,6 +8,13 @@ const WALLET_PROFILE_DIR = path.resolve(__dirname, "../.wallet-profile");
 export const WALLET_PASSWORD = process.env.E2E_WALLET_PASSWORD ?? "TestPassword123!";
 export const WALLET_PUBLIC_KEY = process.env.E2E_WALLET_PUBLIC_KEY;
 
+// Demo recordings (playwright.demo.config.ts) set DEMO_VIDEO_DIR. The
+// screen itself is recorded (e2e/demo/screen.ts), so the browser runs as a
+// real window: no fixed viewport, and Freighter popups keep their own size.
+// Popup timings are kept so compose.mjs never cuts into an approval.
+const DEMO = !!process.env.DEMO_VIDEO_DIR;
+export const demoPopups: { openedAt: number; closedAt?: number }[] = [];
+
 if (!fs.existsSync(path.join(EXTENSION_PATH, "manifest.json"))) {
   throw new Error(
     "Freighter extension not found — run e2e/scripts/download-freighter.sh first (see e2e/README.md)."
@@ -51,6 +58,11 @@ export async function approveFreighterPopup(popup: Page): Promise<void> {
   if ((await approveBtn.count()) === 0) {
     throw new Error(`Freighter popup at ${popup.url()} had no recognized approve button (saw: ${JSON.stringify(buttonTexts)})`);
   }
+  if (DEMO) {
+    // Let the viewer read what is being approved.
+    await approveBtn.hover();
+    await popup.waitForTimeout(1800);
+  }
   await approveBtn.click();
 }
 
@@ -75,6 +87,11 @@ export async function approveWalletFlow(
   const onPage = (p: Page) => {
     if (seen.has(p)) return;
     seen.add(p);
+    if (DEMO) {
+      const entry: (typeof demoPopups)[number] = { openedAt: Date.now() };
+      demoPopups.push(entry);
+      p.on("close", () => (entry.closedAt = Date.now()));
+    }
     newPages.push(p);
   };
   context.on("page", onPage);
@@ -107,6 +124,7 @@ export async function approveWalletFlow(
       await appPage.waitForTimeout(400);
     }
   } finally {
+    if (DEMO) await appPage.bringToFront().catch(() => {});
     context.off("page", onPage);
   }
 }
@@ -119,6 +137,14 @@ async function waitForNext(queue: Page[], timeoutMs: number): Promise<Page | nul
     await new Promise((r) => setTimeout(r, 150));
   }
   return null;
+}
+
+function disableTranslate() {
+  const file = path.join(WALLET_PROFILE_DIR, "Default", "Preferences");
+  if (!fs.existsSync(file)) return;
+  const prefs = JSON.parse(fs.readFileSync(file, "utf8"));
+  prefs.translate = { ...prefs.translate, enabled: false };
+  fs.writeFileSync(file, JSON.stringify(prefs));
 }
 
 type WalletFixtures = {
@@ -134,6 +160,9 @@ type WalletFixtures = {
  */
 export const test = base.extend<WalletFixtures>({
   context: async ({}, use) => {
+    // Chrome follows the OS language and offers to translate the English
+    // pages, which covers the wallet popups in demo videos.
+    if (DEMO) disableTranslate();
     const context = await chromium.launchPersistentContext(WALLET_PROFILE_DIR, {
       headless: false,
       colorScheme: "dark",
@@ -141,7 +170,7 @@ export const test = base.extend<WalletFixtures>({
       // Freighter's own fullscreen-mode page) inherit the actual OS window
       // size, which reflows Freighter's layout unpredictably. The window
       // itself is still maximized via --start-maximized below.
-      viewport: { width: 1280, height: 800 },
+      viewport: DEMO ? null : { width: 1280, height: 800 },
       args: [
         `--disable-extensions-except=${EXTENSION_PATH}`,
         `--load-extension=${EXTENSION_PATH}`,
@@ -151,6 +180,8 @@ export const test = base.extend<WalletFixtures>({
         // but this suppresses it even if a previous run didn't.
         "--disable-session-crashed-bubble",
         "--disable-translate",
+        "--disable-features=Translate",
+        "--lang=en-US",
       ],
     });
 

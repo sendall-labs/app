@@ -43,10 +43,10 @@ export async function PUT(
   const { batchId } = await params;
   const batch = await prisma.batch.findFirst({
     where: { id: batchId, ...batchAccessWhere(access) },
-    include: { recipients: true, _count: { select: { attempts: true } } },
+    include: { recipients: true, _count: { select: { attempts: true, runs: { where: { signedAt: { not: null } } } } } },
   });
   if (!batch) return NextResponse.json({ error: "Batch not found" }, { status: 404 });
-  if (batch._count.attempts > 0) {
+  if (batch._count.attempts > 0 || batch._count.runs > 0) {
     return NextResponse.json(
       { error: "Can't edit recipients after signing has started" },
       { status: 409 }

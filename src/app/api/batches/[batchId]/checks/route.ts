@@ -4,6 +4,7 @@ import { Asset } from "@stellar/stellar-sdk";
 import { resolveBatchAccess, batchAccessWhere } from "@/lib/auth/batchAccess";
 import { prisma } from "@/lib/db/prisma";
 import { checkRecipients } from "@/lib/stellar/balanceCheck";
+import { checkOutcome } from "@/lib/distribution/checkOutcome";
 import type { Network } from "@/generated/prisma/enums";
 
 const bodySchema = z.object({
@@ -59,8 +60,8 @@ export async function POST(
 
     await prisma.$transaction(
       candidates.map((r) => {
+        const { ok, message } = checkOutcome(batch.kind, results.get(r.destination), !asset);
         const result = results.get(r.destination);
-        const ok = result?.ok ?? false;
         return prisma.recipient.update({
           where: { id: r.id },
           data: {
@@ -69,7 +70,7 @@ export async function POST(
             hasTrustline: result?.hasTrustline ?? null,
             trustlineLimitOk: result?.trustlineLimitOk ?? null,
             status: ok ? "READY" : "CHECK_FAILED",
-            errorMessage: ok ? null : result?.reason,
+            errorMessage: message,
           },
         });
       })

@@ -13,17 +13,18 @@ type AddressListSummary = {
 };
 
 export default function AddressListsPage() {
-  const { address } = useWallet();
+  const { address, authenticated } = useWallet();
   const [lists, setLists] = useState<AddressListSummary[] | null>(null);
 
   useEffect(() => {
-    // JSX below branches on `address` first, so no need to clear stale
-    // list state here when there's no wallet.
-    if (!address) return;
+    // Waits for the session, which lands after the address during sign-in.
+    // JSX below branches on `address` first, so no need to clear stale list
+    // state here when there's no wallet.
+    if (!address || !authenticated) return;
     fetch("/api/address-lists")
       .then((res) => res.json())
       .then((data) => setLists(data.lists ?? []));
-  }, [address]);
+  }, [address, authenticated]);
 
   return (
     <div className="flex flex-col gap-8">

@@ -13,7 +13,7 @@ export type SubmitResult = {
 };
 
 /** Extracts each operation's result code (e.g. "paymentNoTrust") from a decoded TransactionResult. */
-function decodePerOperationResults(
+export function decodePerOperationResults(
   result: xdr.TransactionResult
 ): { operationIndex: number; success: boolean; code: string }[] {
   const results = result.result().results?.() ?? [];
