@@ -852,6 +852,9 @@ export default function BatchReviewPage() {
         <h1 className="flex items-center gap-3 text-2xl font-semibold tracking-tight text-ink">
           {batch.kind === "CLAIMABLE_BALANCE" ? "Bulk claimable balance" : "Bulk payment"}
           <KindBadge kind={batch.kind ?? "PAYMENT"} />
+          {batch.network === "PUBLIC" && (
+            <span className="rounded-full bg-danger-soft px-2.5 py-1 text-xs font-medium text-danger">Mainnet · real funds</span>
+          )}
         </h1>
         <p className="mt-1 flex items-center gap-2 text-sm text-ink-muted">
           {batch.csvFileName ?? formatCreatedAt(batch.createdAt)}
@@ -934,6 +937,7 @@ export default function BatchReviewPage() {
       {distribution.phase === "review" && distribution.review && (
         <SendReviewCard
           review={distribution.review}
+          network={batchNetwork}
           error={distribution.error}
           busy={false}
           onApprove={distribution.approve}

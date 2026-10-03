@@ -123,9 +123,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="mt-auto flex flex-col gap-3 border-t border-hairline pt-4">
-          <div className="flex items-center gap-2 px-2 text-xs text-ink-muted">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-            {network === "PUBLIC" ? "Public Network" : "Testnet"}
+          <div className={`flex items-center gap-2 px-2 text-xs ${network === "PUBLIC" ? "font-medium text-danger" : "text-ink-muted"}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${network === "PUBLIC" ? "bg-danger" : "bg-accent"}`} />
+            {network === "PUBLIC" ? "Mainnet" : "Testnet"}
           </div>
           {address && (
             <div className="flex items-center gap-2 px-2 py-1">

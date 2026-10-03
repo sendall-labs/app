@@ -179,7 +179,9 @@ export function useDistributionRun(params: {
     }
     try {
       setPhase("authorizing");
-      const { run: view } = await postJson(`/api/runs/${review.runId}/authorize`, { signedXdr: signed });
+      // The review card only enables approval on Mainnet once the sender
+      // typed the confirmation; the server requires this flag as well.
+      const { run: view } = await postJson(`/api/runs/${review.runId}/authorize`, { signedXdr: signed, confirmMainnet: network === "PUBLIC" });
       setRun(view);
       setPhase("running");
     } catch (err) {

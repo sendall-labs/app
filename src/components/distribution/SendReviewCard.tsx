@@ -29,20 +29,25 @@ function Row({ label, value, hint }: { label: string; value: React.ReactNode; hi
  * which network, and who pays for what. Nothing is signed until
  * "Approve in wallet".
  */
+export const MAINNET_CONFIRM_WORD = "MAINNET";
+
 export function SendReviewCard({
   review,
+  network,
   error,
   busy,
   onApprove,
   onCancel,
 }: {
   review: ReviewInfo;
+  network: "TESTNET" | "PUBLIC";
   error: RunRequestError | null;
   busy: boolean;
   onApprove: () => void;
   onCancel: () => void;
 }) {
   const left = useCountdown(review.expiresAt);
+  const [typed, setTyped] = useState("");
   const expired = left === 0;
   const mins = Math.floor(left / 60000);
   const secs = Math.floor((left % 60000) / 1000)
@@ -52,7 +57,8 @@ export function SendReviewCard({
   const p = review.preflight;
   const cleanup = review.purpose === "CLEANUP";
   const reclaim = review.purpose === "RECLAIM";
-  const mainnet = s?.network === "PUBLIC";
+  const mainnet = network === "PUBLIC";
+  const confirmed = !mainnet || typed.trim().toUpperCase() === MAINNET_CONFIRM_WORD;
   const claimable = s?.kind === "CLAIMABLE_BALANCE";
 
   return (
@@ -94,7 +100,7 @@ export function SendReviewCard({
             {s && <Row label="Recipients" value={s.recipientCount.toLocaleString("en-US")} />}
             {s && <Row label="Total" value={`${s.totalAmount} ${s.asset}`} />}
             <Row label="Stellar transactions" value={review.transactionCount} hint="Sent in parallel, each from its own channel" />
-            {s && (
+            {(
               <Row
                 label="Network"
                 value={<span className={mainnet ? "text-danger" : undefined}>{mainnet ? "Mainnet (real funds)" : "Testnet"}</span>}
@@ -120,6 +126,22 @@ export function SendReviewCard({
         <Row label="Network fees and temporary signer reserve" value={<span className="text-success">Covered by Sendall</span>} />
       </dl>
 
+      {mainnet && (
+        <div className="mt-4 rounded-xl border border-danger/40 bg-danger-soft px-4 py-3">
+          <p className="text-sm font-medium text-danger">This sends real funds on Stellar Mainnet and cannot be undone.</p>
+          <label className="mt-2 block text-xs text-danger/90">
+            Type <span className="font-mono font-semibold">{MAINNET_CONFIRM_WORD}</span> to confirm
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              aria-label="Type MAINNET to confirm"
+              autoComplete="off"
+              className="mt-1.5 block w-48 rounded-lg border border-danger/40 bg-surface px-3 py-1.5 font-mono text-sm text-ink focus:border-danger focus:outline-none"
+            />
+          </label>
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mt-4 rounded-xl bg-warning-soft px-3 py-2 text-sm text-warning">
           {error.message}
@@ -138,7 +160,7 @@ export function SendReviewCard({
         <button
           type="button"
           onClick={onApprove}
-          disabled={busy || expired}
+          disabled={busy || expired || !confirmed}
           className="accent-gradient cursor-pointer rounded-full px-5 py-2 text-sm font-medium text-white shadow-sm transition-transform hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         >
           {busy ? "Waiting for wallet…" : "Approve in wallet"}
