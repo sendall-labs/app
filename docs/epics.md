@@ -23,7 +23,7 @@ This file is the working tracker. Tick a task only when its acceptance criteria 
 Never:
 - push, open PRs, or touch `main` or other branches;
 - spend Mainnet funds;
-- commit secrets, `.env*` or `docs/instawards-2ay-taslak.md`;
+- commit secrets, `.env*` or local draft notes;
 - delete the legacy engine;
 - store, request or transmit a user secret key.
 
